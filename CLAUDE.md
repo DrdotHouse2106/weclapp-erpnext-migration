@@ -67,8 +67,19 @@ mit echten FranceTec-Daten befüllt und wurde bewusst zurückgebaut.
 
 ## Aktueller Stand (zuletzt aktualisiert: 2026-08-08)
 
-**Fertig und offline gegen den vollen Cache verifiziert, aber noch NICHT live gegen die echte
-ERPNext-Instanz gelaufen:**
+Der Nutzer hat ERPNext einmal komplett zurückgesetzt (Migrations-Daten/Masterdata entfernt, die
+Basis-Struktur – Kontenplan, Kostenstellen, Steuervorlagen, Konten-Übergruppen – blieb erhalten)
+und einen frischen ERPNext-API-Key/-Secret hinterlegt. Direkt danach wurden **alle** in `config.py`
+referenzierten Konten-/Gruppen-/Vorlagen-Namen live gegengeprüft – alle 12 existieren:
+`EN_INVOICE_PAID_FROM_ACCOUNT`, `EN_INVOICE_PAID_TO_ACCOUNT`, `EN_PURCHASE_PAID_TO_ACCOUNT`,
+`EN_BANK_ACCOUNT_GROUP`, `EN_LOAN_ACCOUNT_GROUP`, `EN_RECEIVABLE_WRITEOFF_ACCOUNT_GROUP`,
+`EN_DEBTOR_ACCOUNT_GROUP`, `EN_CREDITOR_ACCOUNT_GROUP` (die beiden waren zuvor nur eine
+SKR03-Konvention-Schätzung – jetzt bestätigt korrekt), `EN_DEFAULT_COST_CENTER`,
+`EN_DEFAULT_WAREHOUSE`, `EN_DEFAULT_TAXES_AND_CHARGES`, `EN_DEFAULT_PURCHASE_TAXES_AND_CHARGES`.
+Damit ist der erste echte Live-Lauf (`setup.py` + `main.py` gegen die frisch zurückgesetzte
+Instanz) unmittelbar bevorstehend/im Gange – siehe Session-Verlauf für den aktuellen Ausführungsstatus.
+
+**Fertig und (mindestens) offline gegen den vollen Cache verifiziert:**
 - Bankkonten-Setup (`setup_bank_accounts()`) inkl. Kunden-/Lieferanten-Bankkonten-Migration
   (`EN_MIGRATE_BANK_ACCOUNTS` steht jetzt auf `True`)
 - Zahlungs-/Abschreibungsmigration (`payment_entry_migration.py`) – 81 % Verkauf / 71 % Einkauf
@@ -79,15 +90,9 @@ ERPNext-Instanz gelaufen:**
 - `setup_negative_rate_settings()` (Selling/Buying Settings)
 
 **Offene Punkte:**
-- `config.EN_DEBTOR_ACCOUNT_GROUP`/`EN_CREDITOR_ACCOUNT_GROUP` sind **nicht live verifiziert**
-  (ERPNext-API-Token war beim Bauen inaktiv) – nur eine SKR03-Konvention-Schätzung. Vor dem ersten
-  Lauf von `setup_personal_accounts()` gegen den echten Kontenplan prüfen.
 - Ob "2400 - Forderungsverluste" auch für Einkaufsseiten-Abschreibungen das fachlich richtige Konto
   ist, wurde nur für die Verkaufsseite an zwei echten Beispielen bestätigt (siehe Docstring in
-  `payment_entry_migration.py`).
-- Erster echter Live-Lauf von `setup_bank_accounts()`/`setup_personal_accounts()`/Zahlungsmigration
-  gegen die produktive ERPNext-Instanz steht noch aus (bisher nur Offline-Verifikation gegen den
-  Cache + vereinzelte Live-Checks anderer Config-Werte).
+  `payment_entry_migration.py`) – weiterhin ungeklärt.
 - Nummernkreise für den laufenden Betrieb nach Go-Live (aktuell `autoname=Prompt`, WeClapp-Nummern
   werden 1:1 übernommen) sind für die Zeit nach der Migration noch nicht gelöst.
 - Verträge, SEPA-Mandate, Tickets sind noch nicht migriert (WeClapp-Doctypes existieren, keine
@@ -100,6 +105,22 @@ ERPNext-Instanz gelaufen:**
 - Bestehende generische Konten "1200 - Bankkonto"/"1000 - Kasse" wurden nicht umbenannt (Frappes
   Autoname-Mechanik für Account lässt das über die dünne REST-Wrapper-Schicht nicht zu) – ist
   funktional irrelevant, da Buchung über die Kontonummer läuft, nicht das Label.
+
+## Bekannte, behobene Stolperfallen beim Cachen
+
+- **`weclapp/wc_api.py` hatte keinen Request-Timeout.** Ein hängender Server/Proxy konnte
+  `cache_weclapp.py` unbemerkt für Stunden blockieren (live beobachtet: 2+ Stunden, eine einzelne
+  offene TCP-Verbindung, keine Fehlerausgabe). Jetzt `timeout=(10, 180)` gesetzt, und die
+  Exception-Behandlung greift nicht mehr fälschlich auf `response.status_code` zu, wenn `response`
+  wegen eines Timeouts nie zugewiesen wurde (hätte sonst einen `UnboundLocalError` statt einer
+  sauberen `ApiException` geworfen). Bei einem erneuten Hänger: `ps aux | grep cache_weclapp`,
+  `lsof -p <pid>` zeigt offene Verbindungen, `ls -lat weclapp/cache/*.json` zeigt den letzten
+  Fortschritt.
+- **`_download_documents()` in `wc_cache_wrapper.py` lud Dokumente bei jedem Cache-Lauf neu
+  herunter**, obwohl `cache_all()` nur die `*.json`-Dateien löscht, nicht den
+  `weclapp/cache/documents/`-Baum. Jetzt wird übersprungen, was schon existiert (gleiches Muster
+  wie `cache_article_images.py`, das das schon immer konnte) - macht Re-Cache-Läufe deutlich
+  schneller.
 
 ## Sonstiges
 
