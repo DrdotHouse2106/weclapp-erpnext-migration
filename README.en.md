@@ -36,6 +36,8 @@ Idempotent, one-time ERPNext master-data setup that must exist before the actual
 - Item Groups and Manufacturers derived from WeClapp's article data
 - The full WeClapp Warehouse/Storage Location/Storage Place tree as ERPNext Warehouses
 - WeClapp's real bank/loan/credit-card/cash accounts (`bankAccount`/`cashAccount`) as individual ERPNext Accounts, plus a receivable write-off account for payments with no real bank movement behind them (see Payment Entries below)
+- Individual sub-ledger accounts (a dedicated receivable/payable account per customer/supplier, instead of everyone sharing one collective account) - derived from WeClapp's `party.customerDebtorAccountNumber`/`supplierCreditorAccountNumber`, matched directly via the WeClapp id (no name-matching needed)
+- "Allow Negative Rate For Items" is enabled automatically on both the selling and buying side (needed for credit notes/discount lines, which WeClapp represents as a negative amount)
 - Naming (WeClapp's own document numbers are kept as ERPNext names instead of ERPNext's own naming series)
 
 ### Migrations to ERPNext
@@ -43,10 +45,15 @@ Idempotent, one-time ERPNext master-data setup that must exist before the actual
 Currently implemented (see `main.py`):
 
 **Master data**
-- Customers (incl. their bank accounts, addresses, contacts, custom fields)
-- Suppliers (incl. bank accounts)
+- Customers (incl. their bank accounts, individual sub-ledger account, addresses, contacts, custom
+  fields). If WeClapp has a distinct invoice-email address on file, a dedicated ERPNext Contact is
+  created for it and set as the primary contact - only that way does ERPNext actually pick it up as
+  the default recipient for future invoices (a plain data field wouldn't be used for that)
+- Suppliers (incl. bank accounts, individual sub-ledger account, distinct invoice-email as above)
 - Contacts, Addresses
 - Articles / Items (incl. custom fields, item prices, item groups, manufacturers)
+- CRM events (incoming/outgoing phone calls) as ERPNext Communications, linked to the respective
+  Customer or Supplier
 
 **Transactional data**
 - Quotations
@@ -77,6 +84,7 @@ This was built and tuned against one specific WeClapp account and ERPNext instan
 - **`setup.ITEM_FREIFELDER_LAYOUT`.** The Item "Freifelder" tab's tab/section/column layout was hand-modeled to match this instance's ~44 specific article custom fields (see the code comment on it) - it will not pick up a different WeClapp account's custom fields at all (they'd just be skipped with a `FAILED ... no WeClapp definition found` log). Either rebuild the layout for the new account's fields, or fall back to the generic per-doctype flat section every other doctype already gets (see `setup_custom_fields()`).
 - **Payment Entry account resolution (`payment_entry_migration.py`).** The invoice-number+amount match against WeClapp's accounting journal was empirically validated against this instance's data (~81% sales / ~71% purchase match rate) - re-run that same validation against a new account's own `salesOpenItem`/`purchaseOpenItem`/`accountingTransaction` data before trusting it; match rates depend on how consistently that WeClapp account's bank-feed integration fills in `externalRecordNumber`, which can vary a lot between accounts.
 - **`setup.setup_bank_accounts()`** itself is data-driven (derives everything from `bankAccount.json`/`cashAccount.json`/`ledgerAccount.json`, no hardcoded account list) and should work unmodified for another SKR03-based WeClapp account - only the `EN_BANK_ACCOUNT_GROUP`/`EN_LOAN_ACCOUNT_GROUP`/`EN_RECEIVABLE_WRITEOFF_ACCOUNT_GROUP` parent-group names in `config.py` need to match the target ERPNext's actual chart-of-accounts structure.
+- **`config.EN_DEBTOR_ACCOUNT_GROUP` / `EN_CREDITOR_ACCOUNT_GROUP`** (parent groups for the individual sub-ledger accounts, see `setup.setup_personal_accounts()`) are - unlike every other account name in `config.py` - **not live-verified**, since the ERPNext API access was inactive while this function was built. Currently just a plausible SKR03-convention guess ("...mit Kontokorrent" as the counterpart to the already-verified collective accounts). Check both against the real chart of accounts before running this for real.
 
 ## Installation
 

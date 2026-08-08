@@ -46,6 +46,15 @@ def migrate_wc_en_purchase_payments():
     with mig.MigrationWrapper(wc.WeClappDocType.PURCHASE_OPEN_ITEM, en.ERPNextDocType.PAYMENT_ENTRY) as migration:
         migration.migrate_all()
 
+def migrate_wc_en_crm_events():
+    """Migrate all CRM events (Ereignisse - phone calls) from WeClapp to ERPNext Communications.
+    Must run after migrate_wc_en_customers()/migrate_wc_en_suppliers() - references the
+    already-migrated Customer/Supplier. Events that don't resolve to either (mostly leads) are
+    skipped, see crm_event_migration.py.
+    """
+    with mig.MigrationWrapper(wc.WeClappDocType.CRM_EVENT, en.ERPNextDocType.COMMUNICATION) as migration:
+        migration.migrate_all()
+
 def migrate_wc_en_sales_orders():
     """Migrate all sales orders (Aufträge) from WeClapp to ERPNext"""
     with mig.MigrationWrapper(wc.WeClappDocType.SALES_ORDER, en.ERPNextDocType.SALES_ORDER) as migration:
@@ -229,6 +238,7 @@ if __name__ == "__main__":
     # Belegen, die Artikel referenzieren)
     migrate_wc_en_customers()
     migrate_wc_en_suppliers()
+    migrate_wc_en_crm_events()
     migrate_wc_en_articles()
 
     # Lagerbewegungen (Lagerräume + Artikel müssen bereits existieren, Belege dagegen nicht -

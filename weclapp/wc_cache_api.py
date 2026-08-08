@@ -144,6 +144,25 @@ class WcCacheApi(ApiBase):
             self._purchase_invoices = {v["id"]: v for v in raw.values()}
         return self._purchase_invoices
 
+    def get_parties(self) -> dict:
+        """Returns all WeClapp parties, keyed by WeClapp "id". "party" is the richer base entity
+        behind both customer.json/supplier.json - customer/supplier ids match party ids 1:1
+        (verified against the full cache), but party carries several fields customer/supplier
+        don't expose: the customer's/supplier's individual sub-ledger ("Personenkonto")
+        accountNumber/accountId (customerDebtorAccountNumber/supplierCreditorAccountNumber -
+        customer.json/supplier.json have no equivalent field at all), and per-purpose email
+        overrides like salesInvoiceEmailAddressesId (resolved via partyEmailAddresses).
+
+        Returns:
+            dict: Parties
+        """
+        if getattr(self, "_parties", None) is None:
+            db_path = Path(self.base_url).joinpath("party.json")
+            with open(db_path, "r") as f:
+                raw = json.load(f)["data"]
+            self._parties = {v["id"]: v for v in raw.values()}
+        return self._parties
+
     def get_bank_accounts(self) -> dict:
         """Returns all real WeClapp bank/loan/credit-card accounts, keyed by WeClapp "id".
         Each entry's "accountId" links to a ledger account (see get_ledger_accounts()).

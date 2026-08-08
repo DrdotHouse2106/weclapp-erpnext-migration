@@ -16,3 +16,4 @@ from .item_price_migration import ItemPriceMigration
 from .stock_entry_migration import StockEntryMigration
 from .delivery_note_migration import DeliveryNoteMigration
 from .payment_entry_migration import SalesPaymentEntryMigration, PurchasePaymentEntryMigration
+from .crm_event_migration import CrmEventMigration

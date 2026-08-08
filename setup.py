@@ -471,6 +471,58 @@ def setup_internal_note_fields(en_api: ERPNextAPI):
     print(f"--- Internal Note Fields: {created} created, {skipped} skipped (exists), {failed} failed ---")
 
 
+def setup_personal_accounts(en_api: ERPNextAPI):
+    """Creates one ERPNext Account per WeClapp customer/supplier individual sub-ledger account
+    (Personenkonto) - party.customerDebtorAccountNumber / supplierCreditorAccountNumber, set by
+    WeClapp for ~100% of real customers/suppliers (verified against the full cache: 5680/5681
+    customers, 389/389 suppliers). CustomerMigration/SupplierMigration then link each party to
+    its own account via ERPNext's per-company Customer/Supplier "accounts" override, instead of
+    everyone sharing the single collective receivable/payable account.
+
+    NOTE: config.EN_DEBTOR_ACCOUNT_GROUP / EN_CREDITOR_ACCOUNT_GROUP are NOT live-verified (the
+    ERPNext API token was inactive while this was built) - they're an educated guess based on
+    SKR03 numbering convention (personal accounts are the "mit Kontokorrent" counterpart to the
+    existing collective "ohne Kontokorrent" accounts already in config.py). Verify both group
+    names actually exist in the target ERPNext chart of accounts before running this for real.
+    """
+    parties = json.load(open(f"{config.WC_CACHE_BASE}party.json"))["data"]
+
+    created, skipped, failed = 0, 0, 0
+
+    def _label(party: dict) -> str:
+        return party.get("company") or f"{party.get('firstName') or ''} {party.get('lastName') or ''}".strip()
+
+    def _create_account(number: str, label: str, parent: str, account_type: str, what: str):
+        nonlocal created, skipped, failed
+        try:
+            en_api.create(ERPNextDocType.ACCOUNT, {
+                "account_name": ERPNextHelper.get_wc_account_label(number, label),
+                "account_number": number,
+                "company": config.EN_COMPANY,
+                "parent_account": parent,
+                "account_type": account_type,
+            })
+            created += 1
+        except Exception as e:
+            if "already exists" in str(e) or "DuplicateEntryError" in str(e):
+                skipped += 1
+            else:
+                print(f"FAILED Account {number} - {what}: {type(e).__name__}: {e}")
+                failed += 1
+
+    for v in parties.values():
+        debtor_number = v.get("customerDebtorAccountNumber")
+        if debtor_number:
+            _create_account(debtor_number, _label(v), config.EN_DEBTOR_ACCOUNT_GROUP, "Receivable",
+                             f"Debitor {_label(v)}")
+        creditor_number = v.get("supplierCreditorAccountNumber")
+        if creditor_number:
+            _create_account(creditor_number, _label(v), config.EN_CREDITOR_ACCOUNT_GROUP, "Payable",
+                             f"Kreditor {_label(v)}")
+
+    print(f"--- Personal Accounts (Personenkonten): {created} created, {skipped} skipped (exists), {failed} failed ---")
+
+
 def setup_item_groups(en_api: ERPNextAPI):
     """Creates the ERPNext Item Group hierarchy from WeClapp's articleCategory cache."""
     categories = json.load(open(f"{config.WC_CACHE_BASE}articleCategory.json"))["data"]
@@ -705,6 +757,20 @@ def setup_bank_accounts(en_api: ERPNextAPI):
     print(f"--- Bank/Loan/Write-off Accounts: {created} created, {skipped} skipped (exists), {failed} failed ---")
 
 
+def setup_negative_rate_settings(en_api: ERPNextAPI):
+    """Enables "Allow Negative Rate For Items" on both Selling Settings and Buying Settings.
+    Required because credit-note/discount lines carry a negative rate (see
+    BaseMigration._map_net_rate) - without this, ERPNext rejects those documents outright.
+    Both are Frappe Single doctypes (one record, "name" == doctype name).
+    """
+    for doctype in ("Selling Settings", "Buying Settings"):
+        try:
+            en_api.update(doctype, doctype, {"allow_negative_rate_for_items": 1})
+            print(f"--- {doctype}: allow_negative_rate_for_items enabled ---")
+        except Exception as e:
+            print(f"FAILED enabling allow_negative_rate_for_items on {doctype}: {type(e).__name__}: {e}")
+
+
 def setup_manufacturers(en_api: ERPNextAPI):
     """Creates the ERPNext Manufacturer master records referenced by article.manufacturerName."""
     articles = json.load(open(f"{config.WC_CACHE_BASE}article.json"))["data"]
@@ -788,6 +854,7 @@ def setup_naming(en_api: ERPNextAPI):
         ERPNextDocType.DELIVERY_NOTE.value,
         ERPNextDocType.PAYMENT_ENTRY.value,
         ERPNextDocType.JOURNAL_ENTRY.value,
+        ERPNextDocType.COMMUNICATION.value,
     ]
     created, skipped, failed = 0, 0, 0
     for doctype in doctypes:
@@ -822,6 +889,8 @@ def run_setup():
     setup_item_groups(en_api)
     setup_warehouses(en_api)
     setup_bank_accounts(en_api)
+    setup_personal_accounts(en_api)
+    setup_negative_rate_settings(en_api)
     setup_manufacturers(en_api)
     setup_accounts(en_api)
     setup_free_text_item(en_api)

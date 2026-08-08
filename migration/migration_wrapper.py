@@ -12,6 +12,7 @@ from .article_migration import ArticleMigration
 from .stock_entry_migration import StockEntryMigration
 from .delivery_note_migration import DeliveryNoteMigration
 from .payment_entry_migration import SalesPaymentEntryMigration, PurchasePaymentEntryMigration
+from .crm_event_migration import CrmEventMigration
 from weclapp import WeClappAPI, WeClappDocType, WcCacheApi
 from erpnext import ERPNextAPI, ERPNextDocType
 
@@ -40,6 +41,7 @@ class MigrationWrapper:
         self.wc_purchase_invoices = self.wc_api.get_purchase_invoices()
         self.wc_ledger_accounts = self.wc_api.get_ledger_accounts()
         self.wc_accounting_tx_index = self.wc_api.get_accounting_transaction_payment_index()
+        self.wc_parties = self.wc_api.get_parties()
 
 
     def __enter__(self):
@@ -89,9 +91,11 @@ class MigrationWrapper:
         """
         match self.en_doctype:
             case ERPNextDocType.CUSTOMER:
-                return CustomerMigration(self.en_api, wc_obj, self.wc_custom_attribute_definitions)
+                return CustomerMigration(self.en_api, wc_obj, self.wc_custom_attribute_definitions,
+                                          self.wc_parties)
             case ERPNextDocType.SUPPLIER:
-                return SupplierMigration(self.en_api, wc_obj, self.wc_custom_attribute_definitions)
+                return SupplierMigration(self.en_api, wc_obj, self.wc_custom_attribute_definitions,
+                                          self.wc_parties)
             case ERPNextDocType.ADDRESS:
                 return AddressMigration(self.en_api, wc_obj, self.wc_custom_attribute_definitions)
             case ERPNextDocType.SALES_INVOICE:
@@ -124,5 +128,8 @@ class MigrationWrapper:
                     return PurchasePaymentEntryMigration(self.en_api, wc_obj, self.wc_custom_attribute_definitions,
                                                           self.wc_purchase_invoices, self.wc_ledger_accounts,
                                                           self.wc_accounting_tx_index)
+            case ERPNextDocType.COMMUNICATION:
+                return CrmEventMigration(self.en_api, wc_obj, self.wc_custom_attribute_definitions,
+                                          self.wc_parties)
             case _:
                 raise Exception("No migration found for given doctype!")

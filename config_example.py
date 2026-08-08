@@ -286,6 +286,8 @@ EN_LOAN_ACCOUNT_GROUP              = "II. Verbindlichkeiten gegenüber Kreditins
 EN_RECEIVABLE_WRITEOFF_ACCOUNT     = "2400 - Forderungsverluste - YC"                        # Booked against for WeClapp payments with no matching journal entry
 EN_RECEIVABLE_WRITEOFF_ACCOUNT_TYPE = "Expense Account"                                     # Account type of EN_RECEIVABLE_WRITEOFF_ACCOUNT
 EN_RECEIVABLE_WRITEOFF_ACCOUNT_GROUP = "Aufwendungen 2/4 - YC"                              # Parent group EN_RECEIVABLE_WRITEOFF_ACCOUNT is created under (must exist in ERPNext)
+EN_DEBTOR_ACCOUNT_GROUP             = "1400 - Forderungen aus Lieferungen und Leistungen mit Kontokorrent - YC"    # Parent group for per-customer individual sub-ledger accounts (Personenkonten) - verify against your chart of accounts
+EN_CREDITOR_ACCOUNT_GROUP           = "1600 - Verbindlichkeiten aus Lieferungen und Leistungen mit Kontokorrent - YC"  # Parent group for per-supplier individual sub-ledger accounts (Personenkonten) - verify against your chart of accounts
 
 EN_FREE_TEXT_ITEM               = "FREITEXT"                    # Placeholder item for free-text document lines without a WeClapp article (created by setup.py)
 EN_UPLOAD_IGNORE_PATTERNS       = ["Bestandsbewertung"]         # WeClapp document files whose name contains one of these substrings (case-insensitive) are NOT uploaded to ERPNext
@@ -352,4 +354,4 @@ EN_PURCHASE_PAID_TO_ACCOUNT           = "1610 - Verbindlichkeiten aus Lieferunge
 EN_PURCHASE_PAID_TO_ACCOUNT_TYPE      = "Payable"                                            # Account type of EN_PURCHASE_PAID_TO_ACCOUNT
 
 # ERPNext Settings - Bank accounts
-EN_MIGRATE_BANK_ACCOUNTS        = False                          # If False, customer/supplier bank accounts are not migrated (bank accounts/transactions are out of scope for now)
+EN_MIGRATE_BANK_ACCOUNTS        = True                           # If False, customer/supplier bank accounts are not migrated
