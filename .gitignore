@@ -1,3 +1,14 @@
 config.py
-weclapp/cache/*.json
-weclapp/cache/documents/*
+
+# WeClapp cache - customer data, order/invoice documents, article images. Ignoring the whole
+# tree (not just *.json/documents/*) so nothing new added under it (images/, lock files, ...)
+# slips through by accident.
+weclapp/cache/
+
+__pycache__/
+*.pyc
+.DS_Store
+
+# Real chart of accounts / financial exports - never belongs in git
+Kontenplan*.xlsx
+*.xlsx

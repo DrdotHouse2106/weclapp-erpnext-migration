@@ -60,10 +60,22 @@ class ERPNextAPI(ApiBase):
         Raises:
             Exception: If request fails
         """
+        response = None
         try:
-            response = self.session.request(method=method, url=url, json=data, params=params)
+            try:
+                response = self.session.request(method=method, url=url, json=data, params=params)
+            except RequestException:
+                # Transient connection-level failure (no response object) - retry once
+                response = self.session.request(method=method, url=url, json=data, params=params)
             response.raise_for_status()
         except RequestException as e:
+            if response is None:
+                # Connection-level failure even after retry: no HTTP response to report
+                raise ApiException(
+                    message=f"Connection error in {method} request to {url}: {e}",
+                    method=method,
+                    url=url
+                ) from e
             if response.status_code == 404:
                 raise ApiException(
                     message=f"Not found: {response.text}",
@@ -83,16 +95,18 @@ class ERPNextAPI(ApiBase):
 
         return response.json()
 
-    def _get_resource_url(self, doctype: ERPNextDocType) -> str:
+    def _get_resource_url(self, doctype: ERPNextDocType|str) -> str:
         """Returns base URL for current API-connection and given DocType.
 
         Args:
-            doctype (WeClappDocTypes): Desired DocType
+            doctype (ERPNextDocType|str): Desired DocType (enum member or raw doctype name,
+                e.g. for custom DocTypes that have no enum entry)
 
         Returns:
             str: Url built of Base-URL & DocType
         """
-        return f"{self.base_url}resource/{doctype.value}"
+        doctype_str = doctype.value if isinstance(doctype, ERPNextDocType) else doctype
+        return f"{self.base_url}resource/{doctype_str}"
 
     def _get_method_url(self, method: str) -> str:
         """Returns base URL for current API-connection and given DocType.
@@ -105,22 +119,26 @@ class ERPNextAPI(ApiBase):
         """
         return f"{self.base_url}method/{method}"
 
-    def create_link(self, parent_doctype : str, parent_name : str, child_doctype : str, child_name : str) -> dict:
+    def create_link(self, parent_doctype : ERPNextDocType|str, parent_name : str,
+                     child_doctype : ERPNextDocType|str, child_name : str) -> dict:
         """Create a link between two entities
 
         Args:
-            parent_doctype (str): Parent DocType
+            parent_doctype (ERPNextDocType|str): Parent DocType
             parent_name (str): Parent name
-            child_doctype (str): Child DocType
+            child_doctype (ERPNextDocType|str): Child DocType
             child_name (str): Child name
 
         Returns:
             dict: Response JSON
         """
-        url = f"{self.base_url}resource/{child_doctype}/{child_name}"
+        parent_doctype_str = parent_doctype.value if isinstance(parent_doctype, ERPNextDocType) else parent_doctype
+        child_doctype_str = child_doctype.value if isinstance(child_doctype, ERPNextDocType) else child_doctype
+
+        url = f"{self.base_url}resource/{child_doctype_str}/{child_name}"
         data = {
             "links": [{
-                "link_doctype": parent_doctype,
+                "link_doctype": parent_doctype_str,
                 "link_name": parent_name
             }]
         }
@@ -146,8 +164,12 @@ class ERPNextAPI(ApiBase):
         try:
             return self._request(f"{self._get_resource_url(doctype)}/{id}", "GET")["data"]
         except ApiException as e:
+            # Only a real 404 means "doesn't exist" - anything else (500, 403, timeout) must
+            # propagate, or every exists-check built on get() would mistake a transient server
+            # error for a missing document and create a duplicate
             if e.status_code == 404:
                 return None
+            raise
 
     def create(self, doctype: ERPNextDocType, data : dict) -> dict:
         """Creates a new entity of the DocType
@@ -226,3 +248,5 @@ class ERPNextAPI(ApiBase):
                 data    = {"doctype": doctype.value, "docname": id}
             )
             response.raise_for_status()
+            # "message" contains the created File document (file_url etc.)
+            return response.json().get("message", {})

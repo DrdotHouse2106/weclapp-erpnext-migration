@@ -31,11 +31,15 @@ class WeClappAPI(ApiBase):
         self.session.close()
 
     def _request(self, url : str, method: str, data: dict = None, params: dict = None) -> dict:
-        """Makes a request to WeClapp API
+        """Makes a read-only request to WeClapp API.
+        This client is intentionally GET-only - WeClapp is the live source system and this
+        project must never write back to it (create/update/delete methods were removed on
+        purpose, not just left unused). Enforced here too, so a future GET-assuming caller can't
+        accidentally pass a write verb through.
 
         Args:
             url (str): URL to make request to
-            method (str): HTTP method (e.g. GET, POST, PUT, DELETE)
+            method (str): HTTP method - only "GET" is allowed
             data (dict, optional): Data to send with request. Defaults to None.
 
         Returns:
@@ -43,6 +47,12 @@ class WeClappAPI(ApiBase):
         Raises:
             Exception: If request fails
         """
+        if method != "GET":
+            raise ApiException(
+                message=f"Refused {method} request to {url}: WeClappAPI is read-only by design",
+                method=method,
+                url=url
+            )
         try:
             response = self.session.request(method=method, url=url, json=data, params=params)
             response.raise_for_status()
@@ -165,41 +175,29 @@ class WeClappAPI(ApiBase):
                 url=f"{self._get_url(doctype)}/count"
             )
 
-    def create(self, doctype: WeClappDocType|str, data : dict) -> dict:
-        """Creates a new entity of the DocType
+    # create/update/delete are required by ApiBase (ERPNextAPI legitimately implements them to
+    # write to ERPNext), but this project must never write back to WeClapp - the live source
+    # system. Refusing immediately here, rather than omitting the methods, since ApiBase is an
+    # ABC: omitting them would just make WeClappAPI un-instantiable with a generic "abstract
+    # method" error instead of this explicit, intentional refusal.
+    def create(self, doctype: WeClappDocType|str, data: dict) -> dict:
+        raise ApiException(
+            message="WeClappAPI is read-only by design - create() is refused",
+            method="POST", url=self._get_url(doctype)
+        )
 
-        Args:
-            doctype (WeClappDocType): DocType to create the entity in
-            data (dict): Data to fill the entity with
+    def update(self, doctype: WeClappDocType|str, id: str, data: dict) -> dict:
+        raise ApiException(
+            message="WeClappAPI is read-only by design - update() is refused",
+            method="PUT", url=self._get_url(doctype)
+        )
 
-        Returns:
-            dict: JSON-response from WeClapp API
-        """
-        return self._request(self._get_url(doctype), "POST", data).json()
+    def delete(self, doctype: WeClappDocType|str, id: str) -> dict:
+        raise ApiException(
+            message="WeClappAPI is read-only by design - delete() is refused",
+            method="DELETE", url=self._get_url(doctype)
+        )
 
-    def update(self, doctype: WeClappDocType|str, id : int, data : dict) -> dict:
-        """Updates an entity of the DocType
-
-        Args:
-            id (int)    : ID of the entity to update
-            data (dict) : Data to update the entity with
-
-        Returns:
-            dict: JSON-response from WeClapp API
-        """
-        return self._request(f"{self._get_url(doctype)}/id/{id}", "PUT", data).json()
-
-    def delete(self, doctype: WeClappDocType|str, id : int) -> dict:
-        """Deletes an entity of the DocType
-
-        Args:
-            id (int): ID of the entity to delete
-
-        Returns:
-            dict: JSON-response from WeClapp API
-        """
-        return self._request(f"{self._get_url(doctype)}/id/{id}", "DELETE").json()
-    
     def get_documents(self, doctype: WeClappDocType|str, id: str) -> list[dict]:
         """Gets all linked documents for a given DocType and ID.
 
