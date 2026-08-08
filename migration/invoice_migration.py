@@ -1,27 +1,58 @@
 from .base_migration import BaseMigration
 from erpnext import ERPNextAPI, ERPNextDocType, ERPNextHelper, TaxInfo
-from weclapp import WeClappAPI, WeClappDocType
+from weclapp import WeClappDocType
 from datetime import datetime
 import config
-from pathlib import Path
 
 class InvoiceMigration(BaseMigration):
-    
+
+    # Built from the actual taxId distribution across all 13930 real salesInvoiceItems in the
+    # WeClapp cache (weclapp/cache/tax.json), giving 100% coverage - the previous table's IDs
+    # ("2691", "2699", "2680", "179484") never occurred anywhere in the real data at all.
+    # DE 19%/7% (IDs 3381/3382, ~94% of all line items) use real ERPNext income/tax accounts.
+    # All non-German EU VAT (AT/IT/NL/LU/FR/GR/DK/BE/HU/PL/ES/PT/IE/CZ/SE/FI/HR, ~2% combined)
+    # is booked to the generic income account plus the dedicated OSS VAT liability account
+    # (created by setup.py) - tax amounts are taken 1:1 from WeClapp (charge_type "Actual"),
+    # so no per-country rate math is needed and totals match exactly.
+    OSS_ACCOUNT = "1767 - Umsatzsteuer OSS (EU-Ausland) - FT"
+
     WC_EN_TAX_MAPPPING = {
-        "2691"  : TaxInfo("4400 - Erlöse 19 % USt - pcg", "3806 - Umsatzsteuer 19 % - pcg", "Umsatzsteuer 19 %", 19.0),
-        "2699"  : TaxInfo("4400 - Erlöse 19 % USt - pcg", "3806 - Umsatzsteuer 19 % - pcg", "Umsatzsteuer 16 % (Q3/4 2020)", 16.0),
-        "2680"  : TaxInfo("4125 - Steuerfreie Innergemeinschaftliche Lieferungen § 4 Nr. 1b UStG - pcg", None, None, 0.0),
-        "179484": TaxInfo("4125 - Steuerfreie Innergemeinschaftliche Lieferungen § 4 Nr. 1b UStG - pcg", None, None, 0.0)
+        "3381"  : TaxInfo("8400 - Erlöse USt. 19 % - FT", "1776 - Umsatzsteuer 19 % - FT", "DE Umsatzsteuer 19 %", 19.0),
+        "3382"  : TaxInfo("8300 - Erlöse USt. 7 % - FT", "1771 - Umsatzsteuer 7 % - FT", "DE Umsatzsteuer 7 %", 7.0),
+        "3385"  : TaxInfo("8200 - Erlöse - FT", None, "DE Steuerfrei (VK)", 0.0),
+        "3386"  : TaxInfo("8200 - Erlöse - FT", None, "DE Steuerfreie EG-Warenlieferung (VK)", 0.0),
+        "3387"  : TaxInfo("8200 - Erlöse - FT", None, "DE Steuerfrei Drittland (VK)", 0.0),
+        # Non-German EU VAT - generic income account + OSS VAT liability account (see note above)
+        "708418": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "AT Umsatzsteuer 20 %", 20.0),
+        "708419": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "AT Umsatzsteuer ermäßigt 10 %", 10.0),
+        "1407275": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "IT IVA 22 %", 22.0),
+        "708190": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "NL Umsatzsteuer 21 %", 21.0),
+        "708135": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "LU Umsatzsteuer 17 %", 17.0),
+        "708139": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "LU Umsatzsteuer ermäßigt 8 %", 8.0),
+        "707998": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "FR Umsatzsteuer 20 %", 20.0),
+        "707999": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "FR Umsatzsteuer ermäßigt 5.5 %", 5.5),
+        "708018": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "GR Umsatzsteuer 24 %", 24.0),
+        "707941": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "DK Umsatzsteuer 25 %", 25.0),
+        "707904": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "BE Umsatzsteuer 21 %", 21.0),
+        "708380": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "HU Umsatzsteuer 27 %", 27.0),
+        "708226": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "PL Umsatzsteuer 23 %", 23.0),
+        "708338": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "ES Umsatzsteuer 21 %", 21.0),
+        "708245": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "PT Umsatzsteuer 23 %", 23.0),
+        "708037": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "IE Umsatzsteuer 23 %", 23.0),
+        "708357": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "CZ Umsatzsteuer 21 %", 21.0),
+        "708283": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "SE Umsatzsteuer 25 %", 25.0),
+        "815241": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "FI Umsatzsteuer 25.5 %", 25.5),
+        "708078": TaxInfo("8200 - Erlöse - FT", OSS_ACCOUNT, "HR Umsatzsteuer 25 %", 25.0),
     }
 
-    def __init__(self, en_api: ERPNextAPI, wc_data: dict):
+    def __init__(self, en_api: ERPNextAPI, wc_data: dict, wc_custom_attribute_definitions: dict):
         """Initializes the migration wrapper.
 
         Args:
             en_api (ERPNextAPI): ERPNext-API-Object
             wc_data (dict): WeClapp-API-Object
         """
-        super().__init__(en_api, wc_data)
+        super().__init__(en_api, wc_data, wc_custom_attribute_definitions)
         self.taxes = {}
 
     def get_doctype(self) -> ERPNextDocType:
@@ -57,10 +88,19 @@ class InvoiceMigration(BaseMigration):
             "customer"          : self.wc_data.get("customerNumber", str()),
             "title"             : self.wc_data.get("commission", str()),
             "payment_schedule"  : self._map_payment_schedule() if not self._is_credit_note() else None,
+            # Explicit instead of relying on the company's default_receivable_account, so this
+            # doesn't silently break if that default is ever changed.
+            "debit_to"          : config.EN_INVOICE_PAID_FROM_ACCOUNT,
             "taxes_and_charges" : config.EN_DEFAULT_TAXES_AND_CHARGES,
             "items"             : self._map_items(),
-            "taxes"             : self._map_taxes(),
-            "is_return"         : self._is_credit_note()
+            "taxes"             : self._map_taxes(self.WC_EN_TAX_MAPPPING, negate=self._is_credit_note()),
+            "apply_discount_on" : "Net Total",
+            "discount_amount"   : self._map_header_discount_amount("salesInvoiceItems", negate=self._is_credit_note()),
+            "is_return"         : self._is_credit_note(),
+            # Belegkette: zugehöriger Auftrag (see setup.setup_link_fields)
+            "wc_auftrag"        : f"SO-{self.wc_data['salesOrderNumber']}" if self.wc_data.get("salesOrderNumber") else None,
+            # Interne Notiz (see setup.setup_internal_note_fields)
+            "wc_interne_notiz"  : self._map_wc_notes() or None,
         }
     
     def migrate(self) -> dict:
@@ -74,7 +114,9 @@ class InvoiceMigration(BaseMigration):
 
         # Create customer in ERPNext (if not anonymous customer)
         if self.validate():
-            en_invoice = self._en_api.create(ERPNextDocType.SALES_INVOICE, en_data)
+            if self._skip_if_exists(en_data.get("name")):
+                return None
+            en_invoice = self._create_with_link_fallback(ERPNextDocType.SALES_INVOICE, en_data, ["wc_auftrag"])
 
             try:
                 # After validation (is gross amount correct?)
@@ -85,8 +127,9 @@ class InvoiceMigration(BaseMigration):
             # Upload WeClapp documents
             self.upload_weclapp_documents(en_invoice.get("name", str()))
 
-            # Create payment if invoice is paid
-            self._create_payment(en_invoice)
+            # Payments are now migrated separately from WeClapp's real payment data (see
+            # payment_entry_migration.py / main.migrate_wc_en_sales_payments()), not as a
+            # lump sum here anymore.
 
             return en_invoice
         else:
@@ -102,6 +145,9 @@ class InvoiceMigration(BaseMigration):
 
     def _map_payment_schedule(self) -> list[dict]:
         """Maps the payment schedule from WeClapp to ERPNext.
+        NOTE: no "payment_term" link is set here - the Payment Term master is empty in ERPNext,
+        so referencing a name would fail; due_date/invoice_portion are enough for ERPNext to compute
+        the schedule without a named term.
 
         Returns:
             list[dict]: Mapped payment schedule
@@ -109,40 +155,13 @@ class InvoiceMigration(BaseMigration):
         return [{
                 "docstatus"         : config.EN_DEFAULT_INVOICE_STATE,
                 "due_date"          : self._map_due_date(),
-                "invoice_portion"   : 100.0,
-                "payment_term"      : self._map_payment_term()
+                "invoice_portion"   : 100.0
         }]
 
-    def _map_payment_term(self) -> str:
-        """Maps the payment term from WeClapp to ERPNext.
-        Uses default Payment term in config if not term is given.
-        """
-        term = self.wc_data.get("termOfPaymentName", None)
-        return term if term else config.EN_DEFAULT_PAYMENT_TERM
-
-    def _add_tax(self, wc_id: str, en_item: dict) -> None:
-        """Adds the given ERPNext-Item to the tax with the given WeClapp-Tax-ID.
-        
-        Args:
-            wc_id (str): WeClapp tax ID
-            en_item (dict): ERPNext item
-        """
-        # Get tax info by WeClapp tax ID from mapping in config-file
-        tax_info = self.WC_EN_TAX_MAPPPING.get(wc_id, None)
-        if tax_info:
-            tax = self.taxes.get(wc_id, None)
-
-            # Add item to existing tax-type
-            if tax:
-                self.taxes[wc_id].append(en_item)
-
-            # Create new tax-type with item
-            else:
-                self.taxes[wc_id] = [en_item]
-
-    
     def _map_items(self) -> list[dict]:
         """Maps the items from WeClapp to ERPNext.
+        Includes shippingCostItems (present on ~63% of invoices) as extra line items -
+        WeClapp's invoice-level netAmount/grossAmount already includes them.
 
         Returns:
             list[dict]: Mapped items
@@ -150,25 +169,44 @@ class InvoiceMigration(BaseMigration):
         en_items = list()
         for item in self.wc_data.get("salesInvoiceItems", list()):
             tax_info = self.WC_EN_TAX_MAPPPING.get(item.get("taxId", str()), None)
+            net_rate = self._map_net_rate(item)
             en_item = {
                 "docstatus"             : config.EN_DEFAULT_INVOICE_STATE,
+                "item_code"             : item.get("articleNumber", None),
                 "item_name"             : self._map_item_title(item),
                 "description"           : self._map_item_description(item),
-                "price_list_rate"       : item.get("unitPrice", 0),                # Not discounted price (list price)
-                "discount_percentage"   : item.get("discountPercentage", 0),
+                "price_list_rate"       : net_rate,
+                "rate"                  : net_rate,
                 "qty"                   : self._map_item_quantity(item),
                 "uom"                   : self._map_item_uom(item),
                 "cost_center"           : config.EN_DEFAULT_COST_CENTER,
                 "income_account"        : tax_info.income_account if tax_info else None
             }
             en_items.append(en_item)
-            self._add_tax(item.get("taxId", str()), en_item)
+            self._add_tax(self.WC_EN_TAX_MAPPPING, item)
+
+        for item in self.wc_data.get("shippingCostItems", list()):
+            tax_info = self.WC_EN_TAX_MAPPPING.get(item.get("taxId", str()), None)
+            en_item = {
+                "docstatus"             : config.EN_DEFAULT_INVOICE_STATE,
+                "item_code"             : item.get("articleNumber", None),
+                "item_name"             : "Versandkosten",
+                "description"           : "Versandkosten",
+                "price_list_rate"       : self._map_net_rate(item),
+                "rate"                  : self._map_net_rate(item),
+                "qty"                   : -1 if self._is_credit_note() else 1,
+                "uom"                   : config.EN_DEFAULT_UOM,
+                "cost_center"           : config.EN_DEFAULT_COST_CENTER,
+                "income_account"        : tax_info.income_account if tax_info else None
+            }
+            en_items.append(en_item)
+            self._add_tax(self.WC_EN_TAX_MAPPPING, item, header_discountable=False)
         return en_items
 
-    def _map_item_quantity(self, item: dict) -> str:
-        """Maps the item quantity.
+    def _map_item_quantity(self, item: dict) -> float:
+        """Maps the item quantity (zero-quantity lines become 1, see _map_item_qty).
         """
-        quantity = item.get("quantity", 0)
+        quantity = self._map_item_qty(item)
 
         # Reverse Quantity if credit note
         if self._is_credit_note():
@@ -179,13 +217,7 @@ class InvoiceMigration(BaseMigration):
     def _map_item_uom(self, item: dict) -> str:
         """Maps the unit of measurement of the invoice item.
         """
-        uom = item.get("unitName", None)
-
-        # Convert "Stk." to "Stk"
-        if uom and uom == "Stk.":
-            uom = "Stk"
-
-        return uom if uom else config.EN_DEFAULT_UOM
+        return ERPNextHelper.get_uom_string(item.get("unitName", None))
 
     def _map_item_title(self, item: dict) -> str:
         """Maps the title of the invoice.
@@ -215,35 +247,15 @@ class InvoiceMigration(BaseMigration):
 
     def _map_due_date(self) -> str:
         """Maps the due date of the invoice.
-        If no due date is given, return the invoice date.
+        If no due date is given - or it lies before the invoice date (rare WeClapp data
+        anomaly, rejected by ERPNext) - the invoice date is used instead.
         """
         due_date = self.wc_data.get("dueDate", None)
         if due_date and isinstance(due_date, int) and due_date > 0:
-            return ERPNextHelper.get_date_from_weclapp_ts(due_date)
+            return max(ERPNextHelper.get_date_from_weclapp_ts(due_date), self._map_invoice_date())
         else:
             return self._map_invoice_date()
 
-    def _map_taxes(self) -> list[dict]:
-        """Maps the taxes from WeClapp to ERPNext.
-
-        Returns:
-            list[dict]: Mapped taxes
-        """
-        en_taxes = list()
-        for tax_id, items in self.taxes.items():
-            tax_info = self.WC_EN_TAX_MAPPPING.get(tax_id, None)
-            if tax_info and tax_info.tax_account:
-                en_tax = {
-                    "docstatus"     : config.EN_DEFAULT_INVOICE_STATE,
-                    "charge_type"   : "On Net Total",
-                    "account_head"  : tax_info.tax_account,
-                    "description"   : tax_info.description,
-                    "rate"          : tax_info.tax_rate,
-                    "cost_center"   : config.EN_DEFAULT_COST_CENTER
-                }
-                en_taxes.append(en_tax)
-        return en_taxes
-    
     def _post_validation(self, en_invoice: dict):
         """Validates the invoice after creation.
 
@@ -262,53 +274,7 @@ class InvoiceMigration(BaseMigration):
             if self._is_credit_note():
                 wc_total = wc_total * -1
             
-            if en_total != wc_total:
+            # Cent-exact, but tolerant of float representation noise (749.7000000001 == 749.70)
+            if round(en_total - wc_total, 2) != 0:
                 raise Exception(f"Gross amount of invoice {en_invoice.get('name', str())} is not correct! (ERPNext: {en_total}, WeClapp: {wc_total})")
 
-    def _create_payment(self, en_invoice: dict):
-        """Creates a payment for the given invoice.
-        Uses the cash account and the invoice date as pay-date.
-        Checks the payment status of the invoice first and ignores credit notes.
-
-        Args:
-            en_invoice (dict): Created ERPNext invoice
-        """
-        # Check if no credit note
-        if self._is_credit_note():
-            return
-        
-        # Check if invoice is paid
-        if self.wc_data.get("paymentStatus", str()) != "PAID":
-            return
-
-        if en_invoice.get("grand_total", 0.0) <= 0.0:
-            return
-
-        # Create payment
-        data = {
-            "docstatus"                 : config.EN_DEFAULT_INVOICE_STATE,                     
-            "payment_type"              : "Receive",          
-            "posting_date"              : en_invoice.get("posting_date", str()),       
-            "mode_of_payment"           : config.EN_INVOICE_MODE_OF_PAYMENT,
-            "party_type"                : ERPNextDocType.CUSTOMER.value,
-            "party"                     : en_invoice.get("customer", str()),
-            "party_name"                : en_invoice.get("customer_name", str()),
-            "paid_from"                 : config.EN_INVOICE_PAID_FROM_ACCOUNT,
-            "paid_from_account_type"    : "Receivable",
-            "paid_from_account_currency": config.EN_DEFAULT_CURRENCY,
-            "paid_to"                   : config.EN_INVOICE_PAID_TO_ACCOUNT,
-            "paid_to_account_type"      : config.EN_INVOICE_PAID_TO_ACCOUNT_TYPE,
-            "paid_to_account_currency"  : config.EN_DEFAULT_CURRENCY,
-            "paid_amount"               : en_invoice.get("grand_total", 0),
-            "received_amount"           : en_invoice.get("grand_total", 0),
-            "references": [
-                {
-                    "docstatus"         : config.EN_DEFAULT_INVOICE_STATE,
-                    "reference_doctype" : ERPNextDocType.SALES_INVOICE.value,
-                    "reference_name"    : en_invoice.get("name", str()),
-                    "total_amount"      : en_invoice.get("grand_total", 0),
-                    "allocated_amount"  : en_invoice.get("grand_total", 0)
-                }
-            ]
-        }
-        self._en_api.create(ERPNextDocType.PAYMENT_ENTRY, data)

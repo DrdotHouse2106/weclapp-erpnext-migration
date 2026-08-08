@@ -1,6 +1,5 @@
 import config
 import re
-import config
 from datetime import datetime
 
 class ERPNextHelper:
@@ -9,18 +8,52 @@ class ERPNextHelper:
     @staticmethod
     def get_country_string(country : str) -> str:
         """Returns the ERPnext territory by a string
-        
+
         Args:
             country (str): Country string
-            
+
         Returns:
             str: ERPnext territory
         """
+        if not country:
+            return None
         return config.EN_COUNTRY_MAP.get(country.lower(), country)
-    
+
+    @staticmethod
+    def get_territory_string(country: str) -> str:
+        """Returns the ERPNext territory for a given (already mapped) country name.
+        Only "Germany" and "Rest Of The World" currently exist as Territory records in ERPNext.
+
+        Args:
+            country (str): Country string (as returned by get_country_string)
+
+        Returns:
+            str: ERPNext territory
+        """
+        if country == config.EN_TERRITORY_GERMANY:
+            return config.EN_TERRITORY_GERMANY
+        return config.EN_TERRITORY_DEFAULT
+
+    @staticmethod
+    def get_uom_string(unit_name: str) -> str:
+        """Maps a WeClapp unitName to an existing ERPNext UOM name via config.EN_UOM_MAP.
+        Falls back to config.EN_DEFAULT_UOM if the unit is unknown or not given.
+
+        Args:
+            unit_name (str): WeClapp unitName
+
+        Returns:
+            str: ERPNext UOM name
+        """
+        if not unit_name:
+            return config.EN_DEFAULT_UOM
+        return config.EN_UOM_MAP.get(unit_name.strip().lower(), config.EN_DEFAULT_UOM)
+
     @staticmethod
     def standardize_phone_number(number: str, default_country_code: str = config.EN_DEFAULT_PHONE_COUNTRY_CODE) -> str:
         """Standardizes a phone number.
+        WeClapp often stores an explicit null for missing phone numbers (not just a missing key),
+        so callers may pass None here even when using dict.get(key, default).
 
         Args:
             number (str): Phone number to standardize
@@ -29,6 +62,9 @@ class ERPNextHelper:
         Returns:
             str: Standardized phone number
         """
+        if not number:
+            return str()
+
         # Remove all non-numeric characters except the + sign
         cleaned_number = re.sub(r'\D', '', number)
 
@@ -44,6 +80,89 @@ class ERPNextHelper:
         return cleaned_number
     
     @staticmethod
+    def get_custom_fieldname(attribute_key: str) -> str:
+        """Derives a valid Frappe fieldname from a WeClapp custom attribute key.
+        Frappe fieldnames must start with a letter/underscore - WeClapp attribute keys
+        are sometimes auto-generated IDs starting with a digit (e.g. "4437i966dkk84h9lkb").
+
+        Args:
+            attribute_key (str): WeClapp attributeKey
+
+        Returns:
+            str: Valid Frappe fieldname
+        """
+        key = re.sub(r'[^a-z0-9_]', '_', attribute_key.lower())
+        if not key or not (key[0].isalpha() or key[0] == '_'):
+            key = f"cf_{key}"
+        return key
+
+    @staticmethod
+    def get_wc_warehouse_name(wc_name: str, wc_id: str) -> str:
+        """Derives the ERPNext Warehouse base name (before ERPNext's automatic company-abbr
+        suffix) for a WeClapp warehouse/storageLocation/storagePlace. The WeClapp id is
+        appended so the name stays unique and deterministic even where WeClapp names collide
+        across different parents (e.g. storage places from different locations) - this lets
+        setup.setup_warehouses() (which creates the warehouses) and the Stock Entry/Delivery
+        Note migrations (which only reference them) compute the identical name independently,
+        without needing to persist an id->name mapping across separate script runs.
+
+        Args:
+            wc_name (str): WeClapp name (warehouse.name / storageLocation.name / storagePlace.name)
+            wc_id (str): WeClapp id of the same record
+
+        Returns:
+            str: Deterministic ERPNext warehouse base name, e.g. "BR001 (3777)"
+        """
+        return f"{wc_name} ({wc_id})"
+
+    # Two SKR03 accounts (bank/cash) already exist in ERPNext under the generic template label
+    # instead of WeClapp's specific one - setup.setup_bank_accounts() finds them already present
+    # (same account_number) and skips creating a duplicate, but renaming an existing Account's
+    # label would require Frappe's dedicated document-rename API (not available in this
+    # project's thin REST wrapper - a plain field update does not rename the derived `name`).
+    # Functionally irrelevant: booking is keyed by account NUMBER, not by this cosmetic label.
+    _EXISTING_ACCOUNT_LABELS = {
+        "1200": "Bankkonto",
+        "1000": "Kasse",
+    }
+
+    @staticmethod
+    def get_wc_account_label(account_number: str, description: str) -> str:
+        """Derives the ERPNext Account's "account_name" field value for a WeClapp bank/cash
+        account - i.e. what setup.setup_bank_accounts() passes on creation.
+
+        Args:
+            account_number (str): WeClapp/SKR03 account number (ledgerAccount.accountNumber)
+            description (str): WeClapp account description (bankAccount.creditInstitute /
+                cashAccount.description)
+
+        Returns:
+            str: Account label, e.g. "PayPal" (or "Bankkonto"/"Kasse" for the two accounts that
+                already existed in ERPNext under the generic SKR03 template label - see
+                _EXISTING_ACCOUNT_LABELS)
+        """
+        return ERPNextHelper._EXISTING_ACCOUNT_LABELS.get(account_number, description)
+
+    @staticmethod
+    def get_wc_account_name(account_number: str, description: str) -> str:
+        """Derives the full ERPNext Account name (before ERPNext's automatic company-abbr
+        suffix, which it appends itself when account_number is set) for a WeClapp bank/cash
+        account. Used by payment_entry_migration.py to reference the account
+        setup.setup_bank_accounts() created - both compute the identical name independently
+        from the same WeClapp data, without persisting an id->name mapping across script runs,
+        same pattern as get_wc_warehouse_name().
+
+        Args:
+            account_number (str): WeClapp/SKR03 account number (ledgerAccount.accountNumber)
+            description (str): WeClapp account description (bankAccount.creditInstitute /
+                cashAccount.description)
+
+        Returns:
+            str: Deterministic ERPNext account base name, e.g. "1210 - PayPal"
+        """
+        return f"{account_number} - {ERPNextHelper.get_wc_account_label(account_number, description)}"
+
+    @staticmethod
     def get_date_from_weclapp_ts(timestamp: int) -> str:
         """Returns a date string from a WeClapp timestamp.
 
@@ -54,3 +173,16 @@ class ERPNextHelper:
             str: Date string
         """
         return datetime.fromtimestamp(timestamp / 1000).strftime("%Y-%m-%d")
+
+    @staticmethod
+    def get_time_from_weclapp_ts(timestamp: int) -> str:
+        """Returns a time-of-day string from a WeClapp timestamp (for posting_time on documents
+        that also need set_posting_time, e.g. Stock Entry).
+
+        Args:
+            timestamp (int): WeClapp timestamp
+
+        Returns:
+            str: Time string (HH:MM:SS)
+        """
+        return datetime.fromtimestamp(timestamp / 1000).strftime("%H:%M:%S")

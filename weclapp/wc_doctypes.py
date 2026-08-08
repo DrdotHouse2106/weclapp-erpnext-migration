@@ -1,8 +1,8 @@
 from base import DocType
 
 class WeClappDocType(DocType):
-    ACCOUNTING_TRANSACTION = "accountingTransaction"
     ARTICLE = "article"
+    ACCOUNTING_TRANSACTION = "accountingTransaction"
     ARTICLE_ACCOUNTING_CODE = "articleAccountingCode"
     ARTICLE_CATEGORY = "articleCategory"
     ARTICLE_ITEM_GROUP = "articleItemGroup"

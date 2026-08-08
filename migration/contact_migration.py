@@ -1,11 +1,12 @@
 from .base_migration import BaseMigration
 from erpnext import ERPNextAPI, ERPNextHelper, ERPNextDocType
+from weclapp import WeClappDocType
 
 class ContactMigration(BaseMigration):
     """Migration wrapper for address objects from WeClapp to ERPNext.
     """
 
-    def __init__(self, en_api: ERPNextAPI, wc_data: dict, wc_customer_data: dict = None):
+    def __init__(self, en_api: ERPNextAPI, wc_data: dict, wc_customer_data: dict = None, wc_custom_attribute_definitions: dict = None):
         """Initializes the contact migration.
 
         Args:
@@ -13,7 +14,7 @@ class ContactMigration(BaseMigration):
             wc_data (dict): WeClapp-API-Object
             wc_customer_data (dict, optional): WeClapp-API-Object of the customer (parent). Defaults to None.
         """
-        super().__init__(en_api, wc_data)
+        super().__init__(en_api, wc_data, wc_custom_attribute_definitions)
         self.wc_customer_data = wc_customer_data
         if self.wc_customer_data:
             self._is_primary = self.wc_customer_data.get("primaryContactId", False) == \
@@ -21,6 +22,9 @@ class ContactMigration(BaseMigration):
     
     def get_doctype(self) -> ERPNextDocType:
         return ERPNextDocType.CONTACT
+
+    def get_wc_doctype(self) -> WeClappDocType:
+        return WeClappDocType.CONTACT
 
     def validate(self) -> bool:
         """
@@ -46,6 +50,10 @@ class ContactMigration(BaseMigration):
             "email_ids"             : self._map_emails(),
             "phone_nos"             : self._map_phone_nos()
         }
+
+        # Custom Attributes (Zusatzfelder, e.g. Fahrzeugdaten/eBay/Opt-Out)
+        transformed_data.update(self._map_custom_attributes())
+
         return transformed_data
     
     def _map_emails(self) -> list:

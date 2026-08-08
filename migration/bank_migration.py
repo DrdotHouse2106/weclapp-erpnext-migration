@@ -1,11 +1,12 @@
 from .base_migration import BaseMigration
 from erpnext import ERPNextAPI, ERPNextHelper, ERPNextDocType, ERPNextFilter, FilterOperator
+from weclapp import WeClappDocType
 
 class BankMigration(BaseMigration):
     """Migration wrapper for address objects from WeClapp to ERPNext.
     """
 
-    def __init__(self, en_api: ERPNextAPI, wc_data: dict):
+    def __init__(self, en_api: ERPNextAPI, wc_data: dict, wc_custom_attribute_definitions: dict = None):
         """Initializes the contact migration.
 
         Args:
@@ -13,10 +14,13 @@ class BankMigration(BaseMigration):
             wc_data (dict): WeClapp-API-Object
             wc_customer_data (dict, optional): WeClapp-API-Object of the customer (parent). Defaults to None.
         """
-        super().__init__(en_api, wc_data)
-    
+        super().__init__(en_api, wc_data, wc_custom_attribute_definitions)
+
     def get_doctype(self) -> ERPNextDocType:
         return ERPNextDocType.BANK
+
+    def get_wc_doctype(self) -> WeClappDocType:
+        return WeClappDocType.BANK_ACCOUNT
 
     def validate(self) -> bool:
         """
