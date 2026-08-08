@@ -36,6 +36,8 @@ Idempotentes, einmaliges Anlegen der ERPNext-Stammdaten, die vor der eigentliche
 - Artikelgruppen und Hersteller aus den WeClapp-Artikeldaten
 - Der vollständige WeClapp-Lagerbaum (Lager/Lagerort/Lagerplatz) als ERPNext-Warehouses
 - WeClapps echte Bank-/Darlehens-/Kreditkarten-/Kassenkonten (`bankAccount`/`cashAccount`) als einzelne ERPNext-Konten, plus ein Forderungsverlust-Konto für Zahlungen ohne echte Bankbewegung dahinter (siehe Zahlungseingänge/-ausgänge unten)
+- Individuelle Personenkonten (ein eigenes Debitoren-/Kreditorenkonto pro Kunde/Lieferant, statt eines gemeinsamen Sammelkontos für alle) – aus WeClapps `party.customerDebtorAccountNumber`/`supplierCreditorAccountNumber` abgeleitet, direkt über die WeClapp-ID zugeordnet (keine Namenszuordnung nötig)
+- "Negative Beträge zulassen" wird auf Verkaufs- und Einkaufsseite automatisch aktiviert (nötig für Gutschriften/Rabattzeilen, die WeClapp mit negativem Betrag abbildet)
 - Namensschema (WeClapps eigene Belegnummern werden als ERPNext-Namen übernommen statt ERPNexts automatischer Nummernkreise)
 
 ### Migrationen nach ERPNext
@@ -43,10 +45,15 @@ Idempotentes, einmaliges Anlegen der ERPNext-Stammdaten, die vor der eigentliche
 Bisher implementiert sind die folgenden Objekte (siehe `main.py`):
 
 **Stammdaten**
-- Kunden (inkl. Bankkonten, Adressen, Kontakte, Zusatzfelder)
-- Lieferanten (inkl. Bankkonten)
+- Kunden (inkl. Bankkonten, individuellem Personenkonto, Adressen, Kontakte, Zusatzfelder). Hat
+  WeClapp eine abweichende Rechnungs-E-Mail-Adresse hinterlegt, wird dafür ein eigener ERPNext-Kontakt
+  angelegt und als primärer Kontakt gesetzt – nur so übernimmt ihn ERPNext beim Anlegen künftiger
+  Rechnungen automatisch als Empfänger (ein reines Datenfeld würde ERPNext dafür nicht heranziehen)
+- Lieferanten (inkl. Bankkonten, individuellem Personenkonto, abweichender Rechnungs-E-Mail wie oben)
 - Kontakte, Adressen
 - Artikel (inkl. Zusatzfelder, Preise, Artikelgruppen, Hersteller)
+- CRM-Ereignisse (ein-/ausgehende Anrufe) als ERPNext Communications, verknüpft mit dem jeweiligen
+  Kunden oder Lieferanten
 
 **Transaktionsdaten**
 - Angebote
@@ -77,6 +84,7 @@ Dieses Projekt wurde gegen eine konkrete WeClapp- und ERPNext-Instanz entwickelt
 - **`setup.ITEM_FREIFELDER_LAYOUT`.** Das Tab-/Sektions-/Spalten-Layout des Artikel-"Freifelder"-Tabs wurde von Hand für ~44 konkrete Artikel-Zusatzfelder dieser Instanz modelliert (siehe Code-Kommentar dort) – es greift bei einer anderen WeClapp-Instanz für deren Zusatzfelder überhaupt nicht (die würden einfach mit `FAILED ... no WeClapp definition found` übersprungen). Entweder das Layout für die neuen Felder neu bauen, oder auf die generische, flache Sektion zurückfallen, die jeder andere Doctype ohnehin bekommt (siehe `setup_custom_fields()`).
 - **Payment-Entry-Kontoauflösung (`payment_entry_migration.py`).** Der Abgleich über Rechnungsnummer + Betrag gegen WeClapps Buchungsjournal wurde empirisch gegen die Daten dieser Instanz validiert (~81 % Verkauf / ~71 % Einkauf Trefferquote) – diese Validierung vor dem produktiven Einsatz gegen die eigenen `salesOpenItem`/`purchaseOpenItem`/`accountingTransaction`-Daten wiederholen. Die Trefferquote hängt stark davon ab, wie konsistent die eigene WeClapp-Bankanbindung `externalRecordNumber` befüllt, was zwischen Instanzen deutlich variieren kann.
 - **`setup.setup_bank_accounts()`** selbst ist datengetrieben (leitet alles aus `bankAccount.json`/`cashAccount.json`/`ledgerAccount.json` ab, keine fest codierte Kontenliste) und sollte für eine andere SKR03-basierte WeClapp-Instanz unverändert funktionieren – nur die beiden Konten-Übergruppen `EN_BANK_ACCOUNT_GROUP`/`EN_LOAN_ACCOUNT_GROUP` sowie `EN_RECEIVABLE_WRITEOFF_ACCOUNT_GROUP` in `config.py` müssen zur tatsächlichen Kontenplan-Struktur der Ziel-ERPNext-Instanz passen.
+- **`config.EN_DEBTOR_ACCOUNT_GROUP` / `EN_CREDITOR_ACCOUNT_GROUP`** (Übergruppen für die individuellen Personenkonten, siehe `setup.setup_personal_accounts()`) sind – anders als alle anderen Kontennamen in `config.py` – **nicht live verifiziert**, da der ERPNext-API-Zugang beim Bau dieser Funktion gerade inaktiv war. Aktuell nur eine plausible SKR03-Konvention-Schätzung ("...mit Kontokorrent" als Pendant zu den bereits verifizierten Sammelkonten). Unbedingt vor dem produktiven Lauf gegen den echten Kontenplan prüfen.
 
 ## Installation
 

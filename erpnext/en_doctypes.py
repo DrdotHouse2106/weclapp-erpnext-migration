@@ -25,3 +25,4 @@ class ERPNextDocType(DocType):
     STOCK_ENTRY         = "Stock Entry"
     DELIVERY_NOTE       = "Delivery Note"
     JOURNAL_ENTRY       = "Journal Entry"
+    COMMUNICATION       = "Communication"

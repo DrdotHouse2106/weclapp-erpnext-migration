@@ -10,14 +10,19 @@ class CustomerMigration(BaseMigration):
     """Migration wrapper for a customer object from WeClapp to ERPNext.
     """
 
-    def __init__(self, en_api: ERPNextAPI, wc_data: dict, wc_custom_attribute_definitions: dict):
+    def __init__(self, en_api: ERPNextAPI, wc_data: dict, wc_custom_attribute_definitions: dict,
+                 wc_parties: dict = None):
         """Initializes the migration wrapper.
 
         Args:
             en_api (ERPNextAPI): ERPNext-API-Object
             wc_data (dict): WeClapp-API-Object
+            wc_parties (dict, optional): WeClapp parties keyed by id (see WcCacheApi.get_parties()) -
+                carries the customer's individual sub-ledger account (Personenkonto) and any
+                distinct invoice-email override, neither of which customer.json itself exposes.
         """
         super().__init__(en_api, wc_data, wc_custom_attribute_definitions)
+        self.wc_parties = wc_parties or {}
 
     def get_doctype(self) -> ERPNextDocType:
         return ERPNextDocType.CUSTOMER
@@ -65,6 +70,24 @@ class CustomerMigration(BaseMigration):
                 en_contacts.append(en_contact)          # Add contact to list
                 if contact_migration.is_primary():      # Primary contact
                     en_data["customer_primary_contact"] = en_contact["name"]
+
+        # Invoice-email override (party.salesInvoiceEmailAddressesId, see _map_invoice_email()) -
+        # modeled as a real Contact, not a plain data field: ERPNext only ever picks up an email
+        # address automatically (e.g. as the default recipient when a new Sales Invoice is
+        # created for this customer) via customer_primary_contact -> Contact.email_id. A Custom
+        # Field would just sit there inert. Only takes over as the primary contact if WeClapp
+        # didn't already give this customer a real named one above - an actual contact person
+        # should win over an address-only stub.
+        invoice_email = self._map_invoice_email()
+        if invoice_email:
+            en_invoice_contact = self._en_api.create(ERPNextDocType.CONTACT, {
+                "first_name": "Rechnungsversand",
+                "last_name": self._map_customer_name(),
+                "email_ids": [{"email_id": invoice_email, "is_primary": 1}],
+            })
+            en_contacts.append(en_invoice_contact)
+            if "customer_primary_contact" not in en_data:
+                en_data["customer_primary_contact"] = en_invoice_contact["name"]
 
         # Create customer in ERPNext
         en_customer = self._en_api.create(ERPNextDocType.CUSTOMER, en_data)
@@ -126,12 +149,58 @@ class CustomerMigration(BaseMigration):
             # Interne Notiz (see setup.setup_internal_note_fields) - Customer only has
             # "description", not recordFreeText/recordOpening/note like transactional documents
             "wc_interne_notiz"              : self._map_wc_notes(fields=("description",)) or None,
+            # Individual sub-ledger account (Personenkonto, see setup.setup_personal_accounts())
+            "accounts"                      : self._map_debtor_account(),
         }
 
         # Custom Attributes (Zusatzfelder)
         transformed_data.update(self._map_custom_attributes())
 
         return transformed_data
+
+    def _get_party(self) -> dict:
+        """Resolves this customer's richer WeClapp party record (customer.id == party.id,
+        verified 1:1 across the full cache) - carries fields customer.json itself doesn't
+        expose (see WcCacheApi.get_parties()).
+        """
+        return self.wc_parties.get(self.wc_data.get("id"))
+
+    def _map_debtor_account(self) -> list:
+        """Maps the customer's individual sub-ledger account (Personenkonto,
+        party.customerDebtorAccountNumber) to ERPNext's per-company Customer.accounts override -
+        WeClapp sets this for ~100% of real customers. The account itself is created by
+        setup.setup_personal_accounts(); the name is recomputed here from the same party data
+        (WeClapp id + company/name) rather than persisted, same no-shared-state pattern as
+        ERPNextHelper.get_wc_warehouse_name(). Falls back to the collective receivable account
+        (config.EN_INVOICE_PAID_FROM_ACCOUNT, ERPNext's default) if WeClapp has none set.
+
+        Returns:
+            list: [{"company": ..., "account": ...}], or [] if no Personenkonto is set
+        """
+        party = self._get_party()
+        number = party.get("customerDebtorAccountNumber") if party else None
+        if not number:
+            return []
+        label = party.get("company") or self._map_customer_name()
+        account_name = f"{ERPNextHelper.get_wc_account_name(number, label)} - {config.EN_COMPANY_ABBR}"
+        return [{"company": config.EN_COMPANY, "account": account_name}]
+
+    def _map_invoice_email(self) -> str:
+        """Maps WeClapp's distinct invoice-email override (party.salesInvoiceEmailAddressesId ->
+        partyEmailAddresses), if the customer has one set - rare (~0.2% of real customers), most
+        just use the general "email" field WeClapp itself falls back to for invoice delivery too.
+
+        Returns:
+            str: The invoice email address, or None if no override is set
+        """
+        party = self._get_party()
+        target_id = party.get("salesInvoiceEmailAddressesId") if party else None
+        if not target_id:
+            return None
+        for entry in party.get("partyEmailAddresses") or []:
+            if entry.get("id") == target_id:
+                return entry.get("toAddresses")
+        return None
     
     def _is_company(self) -> bool:
         """Returns if the given customer is a company (true) or a person (false)
