@@ -121,6 +121,16 @@ Instanz) unmittelbar bevorstehend/im Gange – siehe Session-Verlauf für den ak
   `weclapp/cache/documents/`-Baum. Jetzt wird übersprungen, was schon existiert (gleiches Muster
   wie `cache_article_images.py`, das das schon immer konnte) - macht Re-Cache-Läufe deutlich
   schneller.
+- **`cache_all()` rief `_download_documents()` für JEDEN der ~100 WeClapp-Doctypes auf**, auch für
+  reine Nachschlagetabellen, deren Dokumente nirgends verwendet werden (z. B. `articleSupplySource`
+  mit ~87.000 Einträgen → ~87.000 sequenzielle `get_documents()`-HTTP-Calls, live beobachtet:
+  dominierte den gesamten Lauf über Stunden, sah wie ein Hänger aus, war aber nur brutal
+  ineffizient). Live gemessen mit `ps -o pid,etime,time` (CPU-Zeit wächst kaum über Zeit) plus
+  `lsof -p <pid>` (dieselbe eine Verbindung bleibt lange bestehen) unterscheiden: echter Hänger vs.
+  extrem langsame sequenzielle Schleife sehen fast identisch aus. Fix: `WcCacheWrapper.document_doctypes`
+  - nur noch die 9 Doctypes, die `BaseMigration.upload_weclapp_documents()` tatsächlich aufrufen
+  (ARTICLE, CUSTOMER, SUPPLIER, SALES_INVOICE, SALES_ORDER, PURCHASE_INVOICE, PURCHASE_ORDER,
+  QUOTATION, SHIPMENT), bekommen noch `_download_documents()` aufgerufen.
 
 ## Sonstiges
 
