@@ -53,12 +53,23 @@ class WeClappAPI(ApiBase):
                 method=method,
                 url=url
             )
+        response = None
         try:
-            response = self.session.request(method=method, url=url, json=data, params=params)
+            # (connect timeout, read timeout) - without this, a stalled server/proxy connection
+            # (observed in practice: a single request hanging for hours with zero error/output)
+            # blocks the whole cache run indefinitely with no way to detect or recover from it.
+            response = self.session.request(method=method, url=url, json=data, params=params,
+                                             timeout=(10, 180))
             response.raise_for_status()
         except RequestException as e:
+            if response is None:
+                # Connection-level failure (timeout, DNS, refused, ...) - no HTTP response to report
+                raise ApiException(
+                    message=f"Connection error in {method} request to {url}: {e}",
+                    method=method,
+                    url=url
+                ) from e
             if response.status_code == 404:
-
                 raise ApiException(
                     message=f"Not found: {response.text}",
                     method=method,

@@ -56,6 +56,11 @@ class WcCacheWrapper:
         Uses config.WC_CACHE_DOCUMENTS_BASE as base path and creates a folder for each DocType.
         Under each DocType-folder, a folder for each entity-ID is created.
 
+        Note: cache_all() only wipes the *.json files at the start of a run, not this documents
+        tree - files from a previous run stay on disk. Already-downloaded documents are skipped
+        (same resumable pattern as cache_article_images.py) so a re-cache doesn't re-download
+        every PDF/attachment from scratch every time, which dominates the run time otherwise.
+
         Args:
             doctype (WeClappDocType): DocType to get the documents from
             ids (list[str]): List of entity-IDs to get the documents from
@@ -66,8 +71,11 @@ class WcCacheWrapper:
                 # Create subfolders if not existing
                 base_path = Path(config.WC_CACHE_DOCUMENTS_BASE).joinpath(doctype.value).joinpath(id)
                 base_path.mkdir(parents=True, exist_ok=True)
+                target = base_path.joinpath(document["name"])
+                if target.exists() and target.stat().st_size > 0:
+                    continue
                 # Download document
-                self.wc_api.download_document(document["id"], str(base_path.joinpath(document["name"])))
+                self.wc_api.download_document(document["id"], str(target))
 
     def _cache_archived_emails(self, doctype: WeClappDocType, ids: list[str]) -> None:
         """Caches all archived E-Mails for the given DocType and entity-IDs.
@@ -112,6 +120,7 @@ class WcCacheWrapper:
                 print(f"Cached {doctype}")
 
             except Exception as e:
-                # Doctype couldnt be cached
-                print(f"Could not cache {doctype}.")
-                print(e.response_text)
+                # Doctype couldnt be cached - print whatever detail is available without assuming
+                # e is always an ApiException (a non-API error here must not crash the loop itself
+                # and abort caching every doctype after it)
+                print(f"Could not cache {doctype}: {type(e).__name__}: {getattr(e, 'response_text', None) or e}")
