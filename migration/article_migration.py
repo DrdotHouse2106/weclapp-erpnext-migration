@@ -30,11 +30,19 @@ class ArticleMigration(BaseMigration):
         en_data = self._transform()
 
         # Upsert: if the item already exists (same article number), update it with the current
-        # field mapping (item group, custom fields, manufacturer, ...) instead of failing with
-        # a duplicate error. Prices/documents are skipped then to avoid duplicating them.
+        # field mapping (custom fields, manufacturer, ...) instead of failing with a duplicate
+        # error. Prices/documents are skipped then to avoid duplicating them.
+        # "description"/"item_group" are excluded here on purpose: once an item exists, these two
+        # fields may be co-managed by other integrations (e.g. a Shopware sync writing back
+        # shop-edited descriptions/categories) that only push their own state, don't track who
+        # last touched the field, and would be silently overwritten by a WeClapp re-run - even
+        # though this project's own plan is to run the WeClapp import only once, before any such
+        # integration starts. Only setting them on initial creation makes that safe regardless of
+        # whether that "runs only once" assumption actually holds in practice.
         existing = self._en_api.get(ERPNextDocType.ITEM, en_data.get("item_code"))
         if existing:
-            update_data = {k: v for k, v in en_data.items() if k not in ("item_code", "taxes", "barcodes")}
+            update_data = {k: v for k, v in en_data.items()
+                            if k not in ("item_code", "taxes", "barcodes", "description", "item_group")}
             en_item = self._en_api.update(ERPNextDocType.ITEM, en_data.get("item_code"), update_data)["data"]
             # Backfill images on re-runs, but only while none is set yet (avoids duplicates)
             if not existing.get("image"):
