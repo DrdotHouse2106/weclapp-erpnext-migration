@@ -15,6 +15,25 @@ class WcCacheWrapper:
         WeClappDocType.QUOTATION,
         WeClappDocType.TICKET
     ]
+
+    """list[WeClappDocType]: Doctypes whose documents the migration actually uses
+    (BaseMigration.upload_weclapp_documents() is only ever called by these - see the concrete
+    migration classes' migrate() methods). Every other doctype's "document" attachments are
+    fetched and immediately discarded by nothing, so calling WeClappAPI.get_documents() for them
+    is pure waste - and for high-cardinality lookup doctypes (e.g. articleSupplySource: ~87k
+    entries) that waste is one sequential HTTP round-trip per entity, which in practice dominates
+    the whole cache run's time (observed: single doctype took hours) without ever being used."""
+    document_doctypes = [
+        WeClappDocType.ARTICLE,
+        WeClappDocType.CUSTOMER,
+        WeClappDocType.SUPPLIER,
+        WeClappDocType.SALES_INVOICE,
+        WeClappDocType.SALES_ORDER,
+        WeClappDocType.PURCHASE_INVOICE,
+        WeClappDocType.PURCHASE_ORDER,
+        WeClappDocType.QUOTATION,
+        WeClappDocType.SHIPMENT,
+    ]
     
     def __init__(self, wc_api: WeClappAPI = None, wc_cache_api: WcCacheApi = None):
         """Initializes the cache wrapper.
@@ -109,9 +128,11 @@ class WcCacheWrapper:
                 # Cache all entities
                 self.wc_cache_api.create_many(doctype, entities)
 
-                # Download all documents of the entities
+                # Download all documents of the entities (only for doctypes the migration
+                # actually uses documents for - see document_doctypes)
                 ids = [entity["id"] for entity in entities]
-                self._download_documents(doctype, ids)
+                if doctype in self.document_doctypes:
+                    self._download_documents(doctype, ids)
 
                 # Cache all archived emails of the entities if doctype has archived emails
                 if doctype in self.mail_doctypes:
