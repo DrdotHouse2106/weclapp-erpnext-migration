@@ -4,7 +4,7 @@ Dieses Dokument beschreibt den aktuellen Stand des Migrationsprojekts von WeClap
 
 ## Projektziel
 
-Die vollständige und korrekte Übertragung aller relevanten Geschäftsdaten von der WeClapp-Instanz zur ERPNext-Instanz von FranceTec.
+Die vollständige und korrekte Übertragung aller relevanten Geschäftsdaten von der WeClapp-Instanz zur ERPNext-Instanz.
 
 ## Aktueller Stand
 
