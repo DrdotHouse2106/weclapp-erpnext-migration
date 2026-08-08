@@ -148,3 +148,9 @@ Das führt `setup.run_setup()` erneut aus und danach jeden Migrationsschritt in 
 
 - **API-Schlüssel und Kundendaten gehören niemals in ein öffentliches Repository.** `config.py`, der komplette `weclapp/cache`-Ordner sowie Kontenplan-Exporte (`*.xlsx`) sind in `.gitignore` eingetragen – vor dem ersten Commit prüfen, dass `git status` keine dieser Dateien als "zu committen" anzeigt.
 - Der WeClapp-Client ist strukturell auf reines Lesen beschränkt (siehe oben) – ein aktiver WeClapp-Token in `config.py` erlaubt trotzdem keine Schreibzugriffe auf WeClapp durch dieses Projekt.
+
+## Unterstützen
+
+Wenn dir dieses Projekt weiterhilft, freue ich mich über eine kleine Spende:
+
+[![Spenden via PayPal](https://img.shields.io/badge/Spenden-PayPal-0070ba?logo=paypal&logoColor=white)](https://paypal.me/DrdotHouse)

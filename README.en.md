@@ -148,3 +148,9 @@ This runs `setup.run_setup()` again and then every migration step in the order d
 
 - **API keys and customer data must never end up in a public repository.** `config.py`, the entire `weclapp/cache` folder, and chart-of-accounts exports (`*.xlsx`) are all listed in `.gitignore` - before your first commit, check that `git status` doesn't show any of these as pending.
 - The WeClapp client is structurally limited to reading only (see above) - an active WeClapp token in `config.py` still doesn't grant this project any write access to WeClapp.
+
+## Support
+
+If this project is useful to you, a small donation is always appreciated:
+
+[![Donate via PayPal](https://img.shields.io/badge/Donate-PayPal-0070ba?logo=paypal&logoColor=white)](https://paypal.me/DrdotHouse)
