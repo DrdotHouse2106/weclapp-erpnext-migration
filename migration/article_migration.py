@@ -234,12 +234,18 @@ class ArticleMigration(BaseMigration):
         return None
 
     def _map_item_taxes(self) -> list:
-        """Maps the article's default tax rate (taxRateType) to ERPNext's Item Tax Template
-        child table, so the item suggests the right VAT rate for future manual invoicing too
-        (the migration itself always applies the correct rate per document via item_tax_rate).
+        """Deliberately returns no Item Tax Template. An Item's default template is static
+        (one rate), but the same article can appear in historical WeClapp documents under
+        different tax treatments (domestic standard rate, reduced rate, tax-free export, ...).
+        Every migration already books the exact real tax amount per line as an "Actual" row on
+        the document itself (see BaseMigration._add_tax/_map_taxes) - a default template here
+        would only conflict with that on every historical document where the applied rate
+        differs from the item's current default, tripping ERPNext's item-wise tax
+        reconciliation ("Artikelbezogene Steuerdetails stimmen nicht ... überein"). Confirmed
+        live: this caused ~15-38% of Sales Order/Quotation/Sales Invoice failures in the first
+        full migration run against a freshly reset instance, before this fix.
         """
-        template = config.EN_ITEM_TAX_TEMPLATE_MAP.get(self.wc_data.get("taxRateType"))
-        return [{"item_tax_template": template}] if template else []
+        return []
 
     def _map_barcodes(self) -> list:
         """Maps the EAN of the article to ERPNext's Item Barcode child table.

@@ -65,7 +65,7 @@ Vor jedem `git add`/Push kurz `git status` prüfen, dass keine dieser Dateien au
 `"Your Company"`/`"YC"`, keine echten Firmennamen/Kontodaten) – siehe Historie, das war zwischenzeitlich
 mit echten FranceTec-Daten befüllt und wurde bewusst zurückgebaut.
 
-## Aktueller Stand (zuletzt aktualisiert: 2026-08-08)
+## Aktueller Stand (zuletzt aktualisiert: 2026-08-09)
 
 Der Nutzer hat ERPNext einmal komplett zurückgesetzt (Migrations-Daten/Masterdata entfernt, die
 Basis-Struktur – Kontenplan, Kostenstellen, Steuervorlagen, Konten-Übergruppen – blieb erhalten)
@@ -100,6 +100,45 @@ externe Root Causes, beide auf ERPNext-Seite, nicht im Migrationscode:
    **Für künftige Resets: diese Instanz ist geteilt - nach jedem Reset kurz prüfen, ob Notifications/
    Custom Fields der anderen App sauber (re-)installiert wurden, bevor Rechnungen migriert werden.**
 
+Ein dritter Live-Lauf (nach Fix von 1./2.) deckte drei weitere reale Bugs auf, alle inzwischen
+behoben:
+
+3. **`setup_fiscal_years()` jetzt automatisiert** (vorher als offener Punkt hier notiert). Beim
+   dritten Lauf zusätzlich aufgefallen: der Altrechnungs-Import (siehe unten) braucht Belegjahre
+   bis 2017 zurück, nicht nur 2020. `setup.py` scannt jetzt selbst `orderDate`/`invoiceDate`/
+   `quotationDate`/`shippingDate`/`postingDate` über alle relevanten Cache-Dateien (plus
+   `legacy_invoices/invoices.json`, falls vorhanden) und legt für jedes referenzierte Jahr ein
+   volles Kalenderjahr als Fiscal Year an - offensichtlich korrupte Timestamps (ein `salesInvoice`
+   mit absurdem negativem Epoch-Wert, löst sich auf ca. Jahr 0023 auf) werden über eine
+   Plausibilitätsspanne (2000-2100) rausgefiltert. Läuft jetzt als Teil von `run_setup()`, kein
+   manueller Schritt mehr nötig.
+4. **Personenkonto-Zuordnung schlug bei Kunden/Lieferanten ohne Vor-/Nachname fehl.**
+   `_map_customer_name()`/`_map_supplier_name()` bauten den Namen via
+   `f"{wc_data.get('firstName', str())} {wc_data.get('lastName', str())}"` - `.get(key, default)`
+   greift nur, wenn der Key fehlt, nicht wenn er mit explizitem `null` im JSON steht (kommt bei
+   WeClapp-Testkunden/Sammelkonten wie "Barverkauf"/"Testkunde" vor). Ergebnis: der berechnete
+   Kontoname enthielt buchstäblich "None" (z. B. "13779 - None Testkunde - FT"), was nicht mit
+   dem von `setup_personal_accounts()` tatsächlich angelegten Konto übereinstimmte (dessen
+   Label-Berechnung mit `or ''` korrekt gegen `None` abgesichert war) → `LinkValidationError`
+   bei der Kundenanlage. Betraf 56 von 59 Customer- und mehrere Supplier-Fehlern im dritten Lauf.
+   Fix: beide Stellen auf `.get('firstName') or ''` umgestellt (in
+   `migration/customer_migration.py`/`migration/supplier_migration.py`).
+5. **Massive Sales-Order/Quotation/Sales-Invoice-Fehlerquote durch Item-Steuer-Template-Konflikt**
+   (524/3405 Sales Orders, 43/114 Quotations, dann live auch Sales Invoices betroffen -
+   "Artikelbezogene Steuerdetails stimmen nicht mit den Steuern und Abgaben überein"). Root Cause:
+   `article_migration.py._map_item_taxes()` setzte pro Item ein statisches ERPNext Item Tax
+   Template basierend auf `article.taxRateType` - obwohl derselbe Artikel in der WeClapp-Historie
+   unter verschiedenen Steuersätzen verkauft worden sein kann (Inland Standard, ermäßigt,
+   steuerfreier Export). Jede Migration bucht den exakten historischen Steuerbetrag ohnehin schon
+   pro Zeile als "Actual"-Steuerzeile auf dem Beleg selbst (`BaseMigration._add_tax`/`_map_taxes`)
+   - das Item-Default kollidierte damit auf jedem Beleg, dessen tatsächlicher Satz vom aktuellen
+   Artikel-Default abwich. Der Docstring behauptete fälschlich, die Migration setze pro Beleg ein
+   `item_tax_rate`-Override - das war nie implementiert. Fix: `_map_item_taxes()` gibt jetzt immer
+   `[]` zurück (kein Item-Default mehr), `config.EN_ITEM_TAX_TEMPLATE_MAP` entfernt (war nur dafür
+   da). Da die ~6199 Items im dritten Lauf schon mit dem alten (falschen) Template angelegt waren,
+   wurden sie zusätzlich per einmaligem Live-Bulk-Update bereinigt (`taxes`-Kindtabelle geleert;
+   Skript nicht im Repo, war ein Wegwerf-Script im Scratchpad).
+
 **Neu: Altrechnungs-Import (`legacy_invoices/`).** Rechnungen, die nur noch als PDF existieren
 (teils vor 2020, teils später - kein Datumsschnitt, sondern "existiert nicht strukturiert in
 WeClapp"), werden separat vom regulären WeClapp-Pipeline importiert. Ablauf: eine externe
@@ -112,6 +151,12 @@ Kunden-/Finanzdaten, nur lokal relevant). Dafür wurden vier neue, vorher nicht 
 SKR03-Konten angelegt (Corona-Zeitraum 07-12/2020, befristete 16%/5%-Sätze): `8309`/`1769`
 (5 %), `8339`/`1775` (16 %) - Kontonummern selbst gewählt (an den bestehenden 19%/7%-Konten
 orientiert, keine verifizierte offizielle DATEV-Nummer), bei Bedarf mit Steuerberater abgleichen.
+Erster Live-Lauf (3604 Rechnungen): 2658 erstellt, 946 fehlgeschlagen - fast alle durch die zu
+diesem Zeitpunkt fehlenden Fiscal Years 2017-2019 (Altrechnungen reichen weiter zurück als die
+reguläre WeClapp-Historie, siehe Punkt 3 oben), 8 durch negative Beträge (Gutschriften), die
+ERPNext als normale Sales Invoice ablehnt - gefixt via `is_return=1` in `_transform()`, sobald
+`net_amount < 0`. Nach beiden Fixes zweiter Lauf gestartet (idempotent, überspringt die 2658
+bereits erstellten).
 
 **Fertig und (mindestens) offline gegen den vollen Cache verifiziert:**
 - Bankkonten-Setup (`setup_bank_accounts()`) inkl. Kunden-/Lieferanten-Bankkonten-Migration

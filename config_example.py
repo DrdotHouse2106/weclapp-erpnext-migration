@@ -308,13 +308,6 @@ EN_CUSTOM_ATTRIBUTE_TYPE_OVERRIDES = {}
 # setup.py creates and fills with the WeClapp selectableValues.
 EN_MULTISELECT_TABLE_FIELDS = {}
 
-# ERPNext Item Tax Template Mapping - WeClapp article "taxRateType" -> ERPNext Item Tax Template name.
-EN_ITEM_TAX_TEMPLATE_MAP = {
-    "STANDARD": "19 % - YC",
-    "REDUCED":  "7 % - YC",
-    "ZERO":     "0 % - YC",
-}
-
 # ERPNext UOM Mapping - WeClapp unitName (lowercased) -> ERPNext UOM name.
 # Frappe ships English UOM names ("Nos", "Kg", "Gram", "Litre", "Meter", ...) which usually don't
 # match WeClapp's German short forms 1:1 - check your ERPNext UOM list and adjust this mapping.

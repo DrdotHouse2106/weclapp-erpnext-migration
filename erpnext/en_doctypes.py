@@ -26,3 +26,4 @@ class ERPNextDocType(DocType):
     DELIVERY_NOTE       = "Delivery Note"
     JOURNAL_ENTRY       = "Journal Entry"
     COMMUNICATION       = "Communication"
+    FISCAL_YEAR         = "Fiscal Year"

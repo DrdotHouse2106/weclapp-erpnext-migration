@@ -206,7 +206,7 @@ class SupplierMigration(BaseMigration):
         """Maps the supplier name based on the party type
         """
         return self.wc_data["company"] if self._is_company() \
-            else f"{self.wc_data.get('firstName', str())} {self.wc_data.get('lastName', str())}".strip()
+            else f"{self.wc_data.get('firstName') or ''} {self.wc_data.get('lastName') or ''}".strip()
 
     def _map_supplier_type(self) -> str:
         """Maps the supplier type
