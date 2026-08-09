@@ -12,3 +12,7 @@ __pycache__/
 # Real chart of accounts / financial exports - never belongs in git
 Kontenplan*.xlsx
 *.xlsx
+
+# Legacy pre-2020 invoice import (PDFs, extracted data, and the format spec) - instance-specific
+# workflow, not needed by the public repo; the other agent reads FORMAT.md locally, not via git.
+legacy_invoices/

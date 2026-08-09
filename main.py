@@ -276,10 +276,17 @@ if __name__ == "__main__":
     # erst jetzt anwenden, nachdem alle historischen Belege importiert sind.
     apply_wc_blocks()
 
-    # Schlussphase 3: "Lager_old"-Warehouse-Baum deaktivieren, jetzt wo die komplette Historie
-    # (Stock Entries + Delivery Notes) dagegen gebucht ist. Ein neues, laufendes Warehouse für
-    # den Tagesbetrieb wird davon unabhängig manuell angelegt.
-    disable_legacy_warehouses()
+    # disable_legacy_warehouses() läuft bewusst NICHT mehr automatisch mit: main.py ist beliebig
+    # oft re-run-bar (idempotent), aber jeder Lauf ruft am Ende trotzdem unconditional
+    # disable_legacy_warehouses() auf, unabhängig davon, ob migrate_wc_en_stock_movements()/
+    # migrate_wc_en_shipments() in DIESEM Lauf tatsächlich vollständig durchgelaufen sind. Live
+    # beobachtet: ein erster Lauf mit vielen Stock-Entry-Fehlschlägen (z.B. fehlendes
+    # Geschäftsjahr) deaktivierte die Lager trotzdem am Ende - der nächste Lauf konnte die
+    # eigentlich noch offenen Stock Entries dann nicht mehr nachbuchen ("Deaktiviertes Lager kann
+    # für diese Transaktion nicht verwendet werden"). disable_legacy_warehouses() ist ein
+    # Cutover-Schritt für den Tag, an dem die Migration wirklich fertig ist - manuell aufrufen
+    # (python3 -c "from main import disable_legacy_warehouses; disable_legacy_warehouses()"),
+    # erst nachdem die Stock-Entry-/Delivery-Note-Zusammenfassungen 0 Fehler zeigen.
 
     # Der Zahlungsabgleich (Rechnung <-> Zahlung, siehe migrate_wc_en_sales_payments()/
     # migrate_wc_en_purchase_payments()) ist angebunden - das volle WeClapp-Buchungsjournal
