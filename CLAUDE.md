@@ -215,20 +215,70 @@ bereits erstellten).
 - CRM-Ereignis-Migration (`crm_event_migration.py`) – 97 % Trefferquote (3784/3895 Anrufe)
 - `setup_negative_rate_settings()` (Selling/Buying Settings)
 
+8. **UOM "Nos" verlangte Ganzzahlen, WeClapp liefert echte gebrochene Stückzahlen.** ERPNexts
+   SKR03-Vorlage aktiviert "Muss eine ganze Zahl sein" auf "Nos" standardmäßig - live bestätigt,
+   dass reale WeClapp-Positionen (z. B. `purchaseInvoiceItems`) Mengen wie 2,4 "Stk." führen, die
+   korrekt auf "Nos" gemappt werden, aber an dieser Einschränkung mit `UOMMustBeIntegerError`
+   scheiterten (113 von 116 Purchase-Invoice-Fehlern im fünften Lauf). Fix:
+   `setup_uom_settings()` deaktiviert `must_be_whole_number` auf "Nos", jetzt Teil von
+   `run_setup()`.
+9. **Delivery Note ohne explizites `rate` bekam von ERPNext automatisch den Item-Standardpreis
+   eingesetzt** - bei ein paar generischen Rabatt-/Gutschrift-Pseudoartikeln (u. a. "920011",
+   "Abrechnung Gebrauchtteilverkauf") ist dieser negativ, was den `base_grand_total` unter 0
+   drückte und mit "Grand Total must be >= 0.0" abgelehnt wurde (11 von 3190 Lieferungen).
+   **Zwei Fixversuche nötig:** ein explizites `"rate": 0` allein reichte NICHT - live per
+   Isolationstest bestätigt, dass ERPNext `rate` beim `validate()` aus `price_list_rate`
+   (aus der Preisliste des Artikels nachgeladen) neu ableitet, auch wenn `rate` schon gesetzt
+   war. Erst zusätzliches `"price_list_rate": 0` hat das unterbunden. `_map_items()` setzt jetzt
+   beide Felder (Lieferschein war ohnehin nie als Preisträger gedacht, siehe Docstring).
+   **Verbleibend, akzeptiert:** 2 von 3190 Lieferungen scheitern an "Angabe des Lagers ist für
+   den Lagerartikel ... erforderlich" - `_map_item_warehouse()` findet für diese Positionen
+   keinen `picks`-Eintrag in WeClapp, es gibt also schlicht keine bekannte Lagerortangabe zum
+   Migrieren. Kein Datenverlust (Stock Entries decken den eigentlichen Lagerbestand ab), nur die
+   Tracking-Notiz fehlt für diese 2 Positionen.
+
+**Live-Migration abgeschlossen (2026-08-09).** Nach acht main.py-Läufen (siehe die Bugfixes 1-9
+oben, jeweils zwischen den Läufen behoben) hat sich das Ergebnis über die letzten beiden Läufe
+identisch stabilisiert - das ist der Endzustand, weitere Re-Runs bringen nichts mehr:
+Customer/Item/Stock Entry/Quotation/Sales Invoice/Purchase Order bei 0 Fehlern, Supplier 2/392,
+Sales Order 1/3405, Delivery Note 2/3190, Purchase Invoice 3/2800, Payment Entry 382 von 7916
+(siehe unten - akzeptiertes Limit, kein Bug). Die verbleibenden Restfehler sind einzeln geprüft
+und verstanden (siehe "Offene Punkte").
+
+**Vom Nutzer entschiedener Scope (2026-08-09) - das hier ist NICHT vergessen, sondern bewusst so
+belassen:**
+- **Verträge, Tickets:** nicht migriert, weil der Nutzer die entsprechenden WeClapp-Module gar
+  nicht abonniert hat - es gibt schlicht keine Daten dafür.
+- **SEPA-Lastschriftmandate:** technisch machbar geprüft (WeClapp hat nur 12 Mandate gecacht,
+  `weclapp/cache/sepaDirectDebitMandate.json`; ERPNext hat kein natives SEPA-Doctype, live
+  bestätigt - Custom Fields auf `Bank Account` wären der pragmatische Weg gewesen), vom Nutzer
+  aber explizit als "nice to have, kein Muss" abgelehnt, nicht umgesetzt.
+- **Nummernkreise für den laufenden Betrieb nach Go-Live:** vom Nutzer explizit als "kann komplett
+  weggelassen werden" eingestuft - bleibt dauerhaft bei `autoname=Prompt` (WeClapp-Nummern 1:1).
+- **Legacy-PDF-Rechnungen als Draft:** vom Nutzer bestätigt, dass der aktuelle Zustand (Entwurf,
+  nicht eingereicht, siehe `legacy_invoices/FORMAT.md`) passt - keine weitere Aktion nötig.
+
 **Offene Punkte:**
 - Ob "2400 - Forderungsverluste" auch für Einkaufsseiten-Abschreibungen das fachlich richtige Konto
   ist, wurde nur für die Verkaufsseite an zwei echten Beispielen bestätigt (siehe Docstring in
   `payment_entry_migration.py`) – weiterhin ungeklärt.
-- Nummernkreise für den laufenden Betrieb nach Go-Live (aktuell `autoname=Prompt`, WeClapp-Nummern
-  werden 1:1 übernommen) sind für die Zeit nach der Migration noch nicht gelöst.
-- Verträge, SEPA-Mandate, Tickets sind noch nicht migriert (WeClapp-Doctypes existieren, keine
-  Migration dafür).
-- **2 Lieferanten mit Fremdwährung (USD: "Openai, Llc", "Frappe Technologies Pvt. Ltd.") scheitern
-  an der Personenkonto-Zuordnung** ("Die Abrechnungswährung muss entweder der Unternehmenswährung
-  oder der Währung des Debitoren-/Kreditorenkontos entsprechen") - `setup_personal_accounts()`
-  legt alle Konten in der Unternehmenswährung (EUR) an, unabhängig von `party.currencyName`. Bei
-  nur 2 von 392 Lieferanten nicht behoben (bräuchte währungsbewusste Kontenanlage) - falls mehr
-  Fremdwährungs-Lieferanten/-Kunden dazukommen, lohnt sich das nachzurüsten.
+- ~~2 Lieferanten mit Fremdwährung scheitern an der Personenkonto-Zuordnung~~ **behoben
+  (2026-08-09):** `setup_personal_accounts()` setzt jetzt `account_currency` auf
+  `party.currencyName`, wenn die von `config.EN_DEFAULT_CURRENCY` abweicht (statt immer EUR).
+  Die beiden bereits live existierenden Konten (70022 "Openai, Llc", 70392 "Frappe Technologies
+  Pvt. Ltd") wurden zusätzlich per Update auf USD nachgezogen.
+- ~~382 Payment Entries lösen sich nicht auf ein echtes Bankkonto auf~~ **davon ~120 behoben
+  (2026-08-09):** Root Cause war KEIN generelles Matching-Problem, sondern ein Vorzeichenfehler
+  bei Zahlungen auf Gutschriften (`is_return=1`) - deren `outstanding_amount` ist bereits negativ,
+  ein positiv gebuchter Betrag wird von ERPNext zu Recht als "größer als der ausstehende Betrag"
+  abgelehnt (live bestätigt: 120 von 196 betroffenen Rechnungen waren Gutschriften). Fix in
+  `_transform_payment()` (negiert `amount`, wenn `en_invoice.is_return`) und in
+  `_transform_writeoff()` (kehrt Soll/Haben um, gleicher Grund). Die verbleibenden ~76 Fälle sind
+  echte WeClapp-Dateninkonsistenzen bei regulären (nicht-Gutschrift) Rechnungen - Zahlung
+  übersteigt den tatsächlichen offenen Betrag unabhängig vom Vorzeichen; das bleibt ein
+  akzeptiertes Limit der Rechnungsnummer+Betrag-Matching-Heuristik.
+- `disable_legacy_warehouses()` als manueller Cutover-Schritt steht noch aus (siehe main.py) -
+  sinnvoll erst, wenn der Nutzer die Migration final für abgeschlossen erklärt.
 
 **Design-Entscheidungen, die bewusst so getroffen wurden (nicht versehentlich unvollständig):**
 - WeClapps volles Buchungsjournal (`accountingTransaction`) wird NICHT als allgemeine Journal Entries

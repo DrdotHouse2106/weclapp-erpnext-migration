@@ -106,19 +106,27 @@ class DeliveryNoteMigration(BaseMigration):
         return ERPNextHelper.get_date_from_weclapp_ts(ts)
 
     def _map_items(self) -> list[dict]:
-        """Maps the shipment items from WeClapp to ERPNext. No rate/price is set - the
-        financial side is already covered by the migrated Sales Invoice; this is a delivery
-        record, not a billing document.
+        """Maps the shipment items from WeClapp to ERPNext. rate/price_list_rate are explicitly
+        pinned to 0 - the financial side is already covered by the migrated Sales Invoice; this
+        is a delivery record, not a billing document. Both fields are needed: ERPNext re-derives
+        "rate" from "price_list_rate" (auto-fetched from the Item's own Price List) during
+        validate() even when "rate" was already sent explicitly - confirmed live, an explicit
+        "rate": 0 alone was NOT enough to stop this. For a handful of generic discount/rebate
+        pseudo-articles that default price list rate is negative, which pushed the whole
+        document's base_grand_total below 0 and got rejected outright (confirmed live, ~11
+        cases, e.g. item 920011).
         """
         en_items = []
         for item in self.wc_data.get("shipmentItems", []):
             en_items.append({
-                "item_code"   : item.get("articleNumber") or config.EN_FREE_TEXT_ITEM,
-                "item_name"   : self._map_item_title(item),
-                "description" : self._map_item_title(item),
-                "qty"         : float(item.get("quantity", 0) or 0) or 1.0,
-                "uom"         : ERPNextHelper.get_uom_string(item.get("unitName")),
-                "warehouse"   : self._map_item_warehouse(item),
+                "item_code"        : item.get("articleNumber") or config.EN_FREE_TEXT_ITEM,
+                "item_name"        : self._map_item_title(item),
+                "description"      : self._map_item_title(item),
+                "qty"              : float(item.get("quantity", 0) or 0) or 1.0,
+                "rate"             : 0,
+                "price_list_rate"  : 0,
+                "uom"              : ERPNextHelper.get_uom_string(item.get("unitName")),
+                "warehouse"        : self._map_item_warehouse(item),
             })
         return en_items
 

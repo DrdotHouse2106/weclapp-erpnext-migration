@@ -497,16 +497,25 @@ def setup_personal_accounts(en_api: ERPNextAPI):
         return (party.get("company") or
                 f"{party.get('firstName') or ''} {party.get('lastName') or ''}").strip()
 
-    def _create_account(number: str, label: str, parent: str, account_type: str, what: str):
+    def _create_account(number: str, label: str, parent: str, account_type: str, currency: str,
+                         what: str):
         nonlocal created, skipped, failed
         try:
-            en_api.create(ERPNextDocType.ACCOUNT, {
+            payload = {
                 "account_name": ERPNextHelper.get_wc_account_label(number, label),
                 "account_number": number,
                 "company": config.EN_COMPANY,
                 "parent_account": parent,
                 "account_type": account_type,
-            })
+            }
+            # Only set account_currency when it actually differs from the company default -
+            # ERPNext otherwise refuses to link a Customer/Supplier whose own currency (billing
+            # currency) doesn't match either the company currency or its receivable/payable
+            # account's currency (confirmed live: 2 USD suppliers, "Openai, Llc" and "Frappe
+            # Technologies Pvt. Ltd.", failed with exactly this ValidationError before this fix).
+            if currency and currency != config.EN_DEFAULT_CURRENCY:
+                payload["account_currency"] = currency
+            en_api.create(ERPNextDocType.ACCOUNT, payload)
             created += 1
         except Exception as e:
             if "already exists" in str(e) or "DuplicateEntryError" in str(e):
@@ -516,14 +525,15 @@ def setup_personal_accounts(en_api: ERPNextAPI):
                 failed += 1
 
     for v in parties.values():
+        currency = v.get("currencyName")
         debtor_number = v.get("customerDebtorAccountNumber")
         if debtor_number:
             _create_account(debtor_number, _label(v), config.EN_DEBTOR_ACCOUNT_GROUP, "Receivable",
-                             f"Debitor {_label(v)}")
+                             currency, f"Debitor {_label(v)}")
         creditor_number = v.get("supplierCreditorAccountNumber")
         if creditor_number:
             _create_account(creditor_number, _label(v), config.EN_CREDITOR_ACCOUNT_GROUP, "Payable",
-                             f"Kreditor {_label(v)}")
+                             currency, f"Kreditor {_label(v)}")
 
     print(f"--- Personal Accounts (Personenkonten): {created} created, {skipped} skipped (exists), {failed} failed ---")
 
@@ -847,6 +857,20 @@ def setup_fiscal_years(en_api: ERPNextAPI):
     print(f"--- Fiscal Years: {created} created, {skipped} skipped (exists), {failed} failed ---")
 
 
+def setup_uom_settings(en_api: ERPNextAPI):
+    """Disables "Must be Whole Number" on the "Nos" UOM. ERPNext's SKR03 template ships this
+    enabled by default, but WeClapp itself does not enforce integer quantities for its "Stk."
+    unit - real purchase/sales data contains fractional piece counts (e.g. 2.4 Stk., confirmed
+    live on purchaseInvoiceItems), which get mapped to "Nos" (config.EN_DEFAULT_UOM/EN_UOM_MAP)
+    and would otherwise be rejected outright with UOMMustBeIntegerError.
+    """
+    try:
+        en_api.update("UOM", "Nos", {"must_be_whole_number": 0})
+        print("--- UOM Nos: must_be_whole_number disabled ---")
+    except Exception as e:
+        print(f"FAILED disabling must_be_whole_number on UOM Nos: {type(e).__name__}: {e}")
+
+
 def setup_manufacturers(en_api: ERPNextAPI):
     """Creates the ERPNext Manufacturer master records referenced by article.manufacturerName."""
     articles = json.load(open(f"{config.WC_CACHE_BASE}article.json"))["data"]
@@ -890,26 +914,39 @@ def setup_free_text_item(en_api: ERPNextAPI):
 
 
 def setup_accounts(en_api: ERPNextAPI):
-    """Creates the OSS VAT liability account for non-German EU sales VAT.
-    The SKR03 chart in ERPNext only ships German Umsatzsteuer accounts - foreign EU VAT
-    amounts from WeClapp (AT/IT/NL/...) are booked collectively to this account so invoice
-    totals stay exact (see InvoiceMigration.OSS_ACCOUNT).
+    """Creates accounts the standard SKR03 chart doesn't ship, which other setup/migration steps
+    assume already exist: the OSS VAT liability account for non-German EU sales VAT (SKR03 only
+    ships German Umsatzsteuer accounts; foreign EU VAT from WeClapp - AT/IT/NL/... - is booked
+    collectively here so invoice totals stay exact, see InvoiceMigration.OSS_ACCOUNT), and the
+    four COVID-period reduced-rate accounts (16%/5%, Jul-Dec 2020) needed by
+    legacy_invoices/import_legacy_invoices.py's TAX_MAPPING - 468 real legacy invoices carry
+    these rates. Account numbers for the COVID pair are not an official DATEV/SKR03 standard
+    (chosen to fit the existing 19%/7% numbering gaps) - verify with a tax advisor if needed.
     """
-    try:
-        en_api.create(ERPNextDocType.ACCOUNT, {
-            "account_name": "Umsatzsteuer OSS (EU-Ausland)",
-            "account_number": "1767",
-            "parent_account": "Umsatzsteuer - FT",
-            "account_type": "Tax",
-            "root_type": "Liability",
-            "company": "FranceTec",
-        })
-        print("--- Account 1767 - Umsatzsteuer OSS (EU-Ausland) - FT: created ---")
-    except Exception as e:
-        if "already exists" in str(e) or "DuplicateEntryError" in str(e):
-            print("--- Account 1767 - Umsatzsteuer OSS (EU-Ausland) - FT: exists ---")
-        else:
-            print(f"FAILED Account 1767 - Umsatzsteuer OSS: {type(e).__name__}: {e}")
+    accounts = [
+        ("1767", "Umsatzsteuer OSS (EU-Ausland)", "Umsatzsteuer - FT", "Tax", "Liability"),
+        ("8339", "Erlöse USt. 16 % (befristet 2020)", "Erlöskonten 8 - FT", "Income Account", "Income"),
+        ("1775", "Umsatzsteuer 16 % (befristet 2020)", "Umsatzsteuer - FT", "Tax", "Liability"),
+        ("8309", "Erlöse USt. 5 % (befristet 2020)", "Erlöskonten 8 - FT", "Income Account", "Income"),
+        ("1769", "Umsatzsteuer 5 % (befristet 2020)", "Umsatzsteuer - FT", "Tax", "Liability"),
+    ]
+    for number, name, parent, account_type, root_type in accounts:
+        full_name = f"{number} - {name} - {config.EN_COMPANY_ABBR}"
+        try:
+            en_api.create(ERPNextDocType.ACCOUNT, {
+                "account_name": name,
+                "account_number": number,
+                "parent_account": parent,
+                "account_type": account_type,
+                "root_type": root_type,
+                "company": config.EN_COMPANY,
+            })
+            print(f"--- Account {full_name}: created ---")
+        except Exception as e:
+            if "already exists" in str(e) or "DuplicateEntryError" in str(e):
+                print(f"--- Account {full_name}: exists ---")
+            else:
+                print(f"FAILED Account {full_name}: {type(e).__name__}: {e}")
 
 
 def setup_naming(en_api: ERPNextAPI):
@@ -968,6 +1005,7 @@ def run_setup():
     setup_bank_accounts(en_api)
     setup_personal_accounts(en_api)
     setup_negative_rate_settings(en_api)
+    setup_uom_settings(en_api)
     setup_manufacturers(en_api)
     setup_accounts(en_api)
     setup_free_text_item(en_api)

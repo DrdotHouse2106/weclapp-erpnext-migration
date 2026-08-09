@@ -209,6 +209,15 @@ class _PaymentEntryMigrationBase(BaseMigration):
         receivable_account, receivable_account_type = self._get_receivable_account()
         accounts = self._map_accounts(receivable_account, receivable_account_type, real_payment["account"])
 
+        # Credit notes (is_return=1) carry a negative outstanding_amount/grand_total - applying
+        # a positive amount against that is rejected outright ("payment cannot be greater than
+        # outstanding amount", since e.g. 39.95 > -39.95). Confirmed live: 120 of 196 invoices
+        # behind the "Zahlung ... kann nicht größer als ausstehender Betrag" failures were credit
+        # notes. Negating the amount here matches how ERPNext itself pre-fills allocated_amount
+        # when you pick a return invoice in the Payment Entry UI.
+        if en_invoice.get("is_return"):
+            amount = -amount
+
         data = {
             "name"              : f"{self.NAME_PREFIX}-{application['id']}",
             "docstatus"         : config.EN_DEFAULT_INVOICE_STATE,
@@ -250,6 +259,12 @@ class _PaymentEntryMigrationBase(BaseMigration):
         """
         receivable_account, receivable_account_type = self._get_receivable_account()
         is_receivable = receivable_account_type == "Receivable"
+        # Credit notes (is_return=1) carry an already-negative outstanding balance - clearing it
+        # moves the receivable/payable the opposite direction of a normal invoice's write-off, so
+        # the debit/credit sides flip too (same reasoning as _transform_payment(), same live
+        # failure: "Zahlung ... kann nicht größer als ausstehender Betrag" on Journal Entry).
+        if en_invoice.get("is_return"):
+            is_receivable = not is_receivable
 
         receivable_line = {
             "account": receivable_account,
