@@ -5,11 +5,21 @@ from weclapp import WeClappDocType
 
 class DeliveryNoteMigration(BaseMigration):
     """Migration wrapper for a shipment (Lieferung) object from WeClapp to an ERPNext Delivery
-    Note. Created with update_stock=0 on purpose - it's a pure delivery/tracking record here,
-    not the source of truth for the stock ledger. warehouseStockMovement already contains the
-    exact same goods-out events (OUT_SALES_ORDER, OUT_SHIPMENT, ...) that shipments represent
+    Note. Created as Draft (docstatus=0) deliberately - it's a pure delivery/tracking record
+    here, not the source of truth for the stock ledger. warehouseStockMovement already contains
+    the exact same goods-out events (OUT_SALES_ORDER, OUT_SHIPMENT, ...) that shipments represent
     (see stock_entry_migration.py), so letting the Delivery Note also move stock would double
     the deduction.
+
+    NOTE: an earlier version submitted this doctype directly with "update_stock": 0 in the
+    payload, assuming that suppresses the stock ledger update like it does on Sales Invoice.
+    It doesn't - "update_stock" isn't even a real Delivery Note field (confirmed live: the
+    ERPNext API rejects it outright as "Field not permitted in query"). A submitted Delivery
+    Note ALWAYS posts to the stock ledger on its own, unconditionally - there is no supported
+    way to submit one without moving stock. Every previously submitted Delivery Note from that
+    version double-deducted stock (once via the Stock Entry replay, once via the Delivery Note
+    itself) - see CLAUDE.md for the live cleanup status. Draft avoids the on_submit hook
+    entirely, which is the only way to keep this purely informational as intended.
     """
 
     def __init__(self, en_api: ERPNextAPI, wc_data: dict, wc_custom_attribute_definitions: dict,
@@ -66,12 +76,14 @@ class DeliveryNoteMigration(BaseMigration):
         """
         transformed_data = {
             "name"                     : f"LS-{self.wc_data['shipmentNumber']}",
-            "docstatus"                : config.EN_DEFAULT_INVOICE_STATE,
+            # Always Draft, independent of config.EN_DEFAULT_INVOICE_STATE - see class docstring:
+            # a submitted Delivery Note unconditionally moves stock, which would double-count
+            # against the Stock Entry replay that already represents this exact movement.
+            "docstatus"                : 0,
             "set_posting_time"         : 1,
             "company"                  : config.EN_COMPANY,
             "customer"                 : self.wc_data.get("recipientCustomerNumber"),
             "posting_date"             : self._map_posting_date(),
-            "update_stock"             : 0,
             "items"                    : self._map_items(),
             # Belegkette: zugehöriger Auftrag (see setup.setup_link_fields) - optional,
             # ~44 shipments have no linked Sales Order

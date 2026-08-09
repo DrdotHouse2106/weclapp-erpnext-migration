@@ -491,7 +491,11 @@ def setup_personal_accounts(en_api: ERPNextAPI):
     created, skipped, failed = 0, 0, 0
 
     def _label(party: dict) -> str:
-        return party.get("company") or f"{party.get('firstName') or ''} {party.get('lastName') or ''}".strip()
+        # .strip() matters: some WeClapp company names carry trailing whitespace (e.g.
+        # "Sattlerei Gawenda "), which would otherwise silently diverge from the name
+        # customer_migration.py/supplier_migration.py recompute for the same account.
+        return (party.get("company") or
+                f"{party.get('firstName') or ''} {party.get('lastName') or ''}").strip()
 
     def _create_account(number: str, label: str, parent: str, account_type: str, what: str):
         nonlocal created, skipped, failed
@@ -759,17 +763,23 @@ def setup_bank_accounts(en_api: ERPNextAPI):
 
 
 def setup_negative_rate_settings(en_api: ERPNextAPI):
-    """Enables "Allow Negative Rate For Items" on both Selling Settings and Buying Settings.
+    """Enables "Allow negative rates for Items" on both Selling Settings and Buying Settings.
     Required because credit-note/discount lines carry a negative rate (see
     BaseMigration._map_net_rate) - without this, ERPNext rejects those documents outright.
     Both are Frappe Single doctypes (one record, "name" == doctype name).
+
+    NOTE: the real fieldname is "allow_negative_rates_for_items" (plural "rates") - an earlier
+    version used the singular "allow_negative_rate_for_items", which Frappe silently drops on
+    update (unknown fields are dropped, not rejected - same behavior noted in
+    setup_custom_fields()'s docstring). The setting was therefore never actually enabled despite
+    this function logging success on every run, confirmed live via the DocType field list.
     """
     for doctype in ("Selling Settings", "Buying Settings"):
         try:
-            en_api.update(doctype, doctype, {"allow_negative_rate_for_items": 1})
-            print(f"--- {doctype}: allow_negative_rate_for_items enabled ---")
+            en_api.update(doctype, doctype, {"allow_negative_rates_for_items": 1})
+            print(f"--- {doctype}: allow_negative_rates_for_items enabled ---")
         except Exception as e:
-            print(f"FAILED enabling allow_negative_rate_for_items on {doctype}: {type(e).__name__}: {e}")
+            print(f"FAILED enabling allow_negative_rates_for_items on {doctype}: {type(e).__name__}: {e}")
 
 
 def setup_fiscal_years(en_api: ERPNextAPI):

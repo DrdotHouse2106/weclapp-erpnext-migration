@@ -81,8 +81,9 @@ def migrate_wc_en_stock_movements():
 
 def migrate_wc_en_shipments():
     """Migrate all shipments (Lieferungen) from WeClapp to ERPNext as Delivery Notes.
-    update_stock=0 (see delivery_note_migration.py) - migrate_wc_en_stock_movements() already
-    covers the same goods-out events, this is a pure delivery/tracking record.
+    Created as Draft (see delivery_note_migration.py) - migrate_wc_en_stock_movements() already
+    covers the same goods-out events, this is a pure delivery/tracking record; a submitted
+    Delivery Note would double-book the stock ledger.
     """
     with mig.MigrationWrapper(wc.WeClappDocType.SHIPMENT, en.ERPNextDocType.DELIVERY_NOTE) as migration:
         migration.migrate_all()
