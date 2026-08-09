@@ -76,8 +76,29 @@ referenzierten Konten-/Gruppen-/Vorlagen-Namen live gegengeprüft – alle 12 ex
 `EN_DEBTOR_ACCOUNT_GROUP`, `EN_CREDITOR_ACCOUNT_GROUP` (die beiden waren zuvor nur eine
 SKR03-Konvention-Schätzung – jetzt bestätigt korrekt), `EN_DEFAULT_COST_CENTER`,
 `EN_DEFAULT_WAREHOUSE`, `EN_DEFAULT_TAXES_AND_CHARGES`, `EN_DEFAULT_PURCHASE_TAXES_AND_CHARGES`.
-Damit ist der erste echte Live-Lauf (`setup.py` + `main.py` gegen die frisch zurückgesetzte
-Instanz) unmittelbar bevorstehend/im Gange – siehe Session-Verlauf für den aktuellen Ausführungsstatus.
+Der erste echte Live-Lauf gegen die frisch zurückgesetzte Instanz fand statt. `setup.py` lief
+fehlerfrei durch (0 failed über alle Schritte). `main.py` scheiterte im ersten Anlauf fast
+vollständig bei allen Belegarten (Rechnungen 0/5165, Lagerbewegungen 2922/15415, ...) durch zwei
+externe Root Causes, beide auf ERPNext-Seite, nicht im Migrationscode:
+
+1. **Fehlendes Geschäftsjahr.** Nach dem Reset existierte nur noch Fiscal Year "2026" - jeder
+   historische Beleg (WeClapp-Daten reichen bis 2020 zurück) schlug mit `FiscalYearError` fehl.
+   Fix: Fiscal-Year-Records 2020-2025 nachträglich per API angelegt (`Fiscal Year`-Doctype,
+   `year_start_date`/`year_end_date` = volles Kalenderjahr, wie beim bestehenden 2026er).
+   **Für künftige Resets: das gehört eigentlich in eine Art `setup_fiscal_years()`, ist aber
+   aktuell nicht in `setup.py` automatisiert** - vor jedem Lauf gegen eine frisch aufgesetzte
+   ERPNext-Instanz prüfen, ob Fiscal-Year-Records den vollen Datumsbereich der WeClapp-Daten
+   abdecken (`min`/`max` über `invoiceDate`/`orderDate`/`postingDate` etc. im Cache).
+2. **Fremde App auf derselben Instanz.** Die ERPNext-Instanz wird auch vom Shopware-6-Sync-Projekt
+   `ecommerce_integrations` genutzt (siehe "Sonstiges" unten). Eine dortige Notification
+   ("Ecommerce Sales Invoice") griff per direktem Attributzugriff auf `doc.ecommerce_source` zu -
+   ein Feld, das auf einer frisch installierten Site nie entstand (die App hatte nie einen
+   funktionierenden `after_install`-Hook, Custom Fields liefen bisher nur zufällig über
+   `bench migrate` auf einer bestehenden Site mit). Jede Rechnungsanlage crashte dadurch komplett.
+   Von der anderen Sitzung über `~/shared-agent-test.md` gemeldet und dort behoben (Hook aktiviert,
+   Notification auf `doc.get('ecommerce_source')` umgestellt), Fix per `bench migrate` deployed.
+   **Für künftige Resets: diese Instanz ist geteilt - nach jedem Reset kurz prüfen, ob Notifications/
+   Custom Fields der anderen App sauber (re-)installiert wurden, bevor Rechnungen migriert werden.**
 
 **Fertig und (mindestens) offline gegen den vollen Cache verifiziert:**
 - Bankkonten-Setup (`setup_bank_accounts()`) inkl. Kunden-/Lieferanten-Bankkonten-Migration
