@@ -64,6 +64,22 @@ class CrmEventMigration(BaseMigration):
             return False
         return bool(self._en_api.get(ERPNextDocType(reference_doctype), reference_name))
 
+    def migrate(self) -> dict:
+        """Migrates a given WeClapp-Object and creates it in ERPNext.
+        Overrides BaseMigration.migrate() to add the idempotency check every other migration
+        already has - without it, a re-run would try to re-create every already-migrated
+        Communication and fail on all of them instead of skipping cleanly.
+
+        Returns:
+            dict: Created ERPNext-Object, or None if invalid/already exists
+        """
+        if not self.validate():
+            return None
+        en_data = self._transform()
+        if self._skip_if_exists(en_data.get("name")):
+            return None
+        return self._en_api.create(self.get_doctype(), en_data)
+
     def _transform(self) -> dict:
         """Transforms the data from WeClapp to ERPNext.
 
