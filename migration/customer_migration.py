@@ -211,7 +211,7 @@ class CustomerMigration(BaseMigration):
         """Maps the customer name based on the party type
         """
         return self.wc_data["company"] if self._is_company() \
-            else f"{self.wc_data.get('firstName', str())} {self.wc_data.get('lastName', str())}".strip()
+            else f"{self.wc_data.get('firstName') or ''} {self.wc_data.get('lastName') or ''}".strip()
         
     def _map_customer_group(self) -> str:
         """Maps the customer group based on the party type

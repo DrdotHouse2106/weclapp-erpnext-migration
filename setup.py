@@ -3,6 +3,7 @@ migration: custom fields (Zusatzfelder), item groups (Artikelgruppen), warehouse
 manufacturers. Safe to re-run - existing records are skipped, not duplicated.
 """
 import json
+from pathlib import Path
 import config
 import weclapp as wc
 from erpnext import ERPNextAPI, ERPNextDocType, ERPNextHelper
@@ -771,6 +772,71 @@ def setup_negative_rate_settings(en_api: ERPNextAPI):
             print(f"FAILED enabling allow_negative_rate_for_items on {doctype}: {type(e).__name__}: {e}")
 
 
+def setup_fiscal_years(en_api: ERPNextAPI):
+    """Creates one ERPNext Fiscal Year record (full calendar year) per year actually referenced
+    by WeClapp transactional dates, plus the legacy PDF invoice import if present locally -
+    ERPNext rejects any document whose posting/order date falls outside an existing Fiscal Year
+    (FiscalYearError). Scans the cache instead of hardcoding a range so a differently-dated
+    WeClapp export is picked up automatically. A handful of known-corrupt WeClapp timestamps
+    (e.g. one salesInvoice with an absurd negative epoch value resolving to a date around year
+    23) are filtered out via a plausible year range (2000-2100) rather than trusted as real
+    Fiscal Year requirements.
+    """
+    date_sources = [
+        ("salesOrder.json", "orderDate"),
+        ("salesInvoice.json", "invoiceDate"),
+        ("purchaseOrder.json", "orderDate"),
+        ("purchaseInvoice.json", "invoiceDate"),
+        ("quotation.json", "quotationDate"),
+        ("shipment.json", "shippingDate"),
+        ("warehouseStockMovement.json", "postingDate"),
+    ]
+    years = set()
+    for fname, field in date_sources:
+        try:
+            data = json.load(open(f"{config.WC_CACHE_BASE}{fname}"))["data"]
+        except FileNotFoundError:
+            continue
+        for v in data.values():
+            ts = v.get(field)
+            if not ts:
+                continue
+            try:
+                year = int(ERPNextHelper.get_date_from_weclapp_ts(ts)[:4])
+            except (ValueError, OSError, OverflowError):
+                continue
+            if 2000 <= year <= 2100:
+                years.add(year)
+
+    legacy_invoices_path = Path(__file__).resolve().parent / "legacy_invoices" / "invoices.json"
+    if legacy_invoices_path.exists():
+        for entry in json.loads(legacy_invoices_path.read_text()):
+            date = entry.get("invoice_date")
+            if date:
+                years.add(int(date[:4]))
+
+    if not years:
+        print("--- Fiscal Years: no transactional dates found, nothing to do ---")
+        return
+
+    created, skipped, failed = 0, 0, 0
+    for year in range(min(years), max(years) + 1):
+        try:
+            en_api.create(ERPNextDocType.FISCAL_YEAR, {
+                "year": str(year),
+                "year_start_date": f"{year}-01-01",
+                "year_end_date": f"{year}-12-31",
+            })
+            created += 1
+        except Exception as e:
+            if "already exists" in str(e) or "DuplicateEntryError" in str(e):
+                skipped += 1
+            else:
+                print(f"FAILED Fiscal Year {year}: {type(e).__name__}: {e}")
+                failed += 1
+    print(f"--- Fiscal Years: {created} created, {skipped} skipped (exists), {failed} failed ---")
+
+
 def setup_manufacturers(en_api: ERPNextAPI):
     """Creates the ERPNext Manufacturer master records referenced by article.manufacturerName."""
     articles = json.load(open(f"{config.WC_CACHE_BASE}article.json"))["data"]
@@ -888,6 +954,7 @@ def run_setup():
     setup_internal_note_fields(en_api)
     setup_item_groups(en_api)
     setup_warehouses(en_api)
+    setup_fiscal_years(en_api)
     setup_bank_accounts(en_api)
     setup_personal_accounts(en_api)
     setup_negative_rate_settings(en_api)
