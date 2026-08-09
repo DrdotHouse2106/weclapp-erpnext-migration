@@ -100,6 +100,19 @@ externe Root Causes, beide auf ERPNext-Seite, nicht im Migrationscode:
    **Für künftige Resets: diese Instanz ist geteilt - nach jedem Reset kurz prüfen, ob Notifications/
    Custom Fields der anderen App sauber (re-)installiert wurden, bevor Rechnungen migriert werden.**
 
+**Neu: Altrechnungs-Import (`legacy_invoices/`).** Rechnungen, die nur noch als PDF existieren
+(teils vor 2020, teils später - kein Datumsschnitt, sondern "existiert nicht strukturiert in
+WeClapp"), werden separat vom regulären WeClapp-Pipeline importiert. Ablauf: eine externe
+Sitzung/ein externer Prozess extrahiert die PDFs zu `legacy_invoices/invoices.json` (Schema in
+`legacy_invoices/FORMAT.md`), `legacy_invoices/import_legacy_invoices.py` liest das ein und legt
+Sales Invoices als **Draft** an (bewusst nicht submitted - erst nach Stichprobenprüfung gegen die
+PDFs manuell einreichen), inkl. PDF-Anhang. Namenskonvention `RE-ALT-...`, komplett getrennt vom
+regulären `RE-...`-Namensraum. Ganzer Ordner `legacy_invoices/` ist in `.gitignore` (echte
+Kunden-/Finanzdaten, nur lokal relevant). Dafür wurden vier neue, vorher nicht existierende
+SKR03-Konten angelegt (Corona-Zeitraum 07-12/2020, befristete 16%/5%-Sätze): `8309`/`1769`
+(5 %), `8339`/`1775` (16 %) - Kontonummern selbst gewählt (an den bestehenden 19%/7%-Konten
+orientiert, keine verifizierte offizielle DATEV-Nummer), bei Bedarf mit Steuerberater abgleichen.
+
 **Fertig und (mindestens) offline gegen den vollen Cache verifiziert:**
 - Bankkonten-Setup (`setup_bank_accounts()`) inkl. Kunden-/Lieferanten-Bankkonten-Migration
   (`EN_MIGRATE_BANK_ACCOUNTS` steht jetzt auf `True`)
