@@ -99,6 +99,13 @@ externe Root Causes, beide auf ERPNext-Seite, nicht im Migrationscode:
    Notification auf `doc.get('ecommerce_source')` umgestellt), Fix per `bench migrate` deployed.
    **Für künftige Resets: diese Instanz ist geteilt - nach jedem Reset kurz prüfen, ob Notifications/
    Custom Fields der anderen App sauber (re-)installiert wurden, bevor Rechnungen migriert werden.**
+   **Update:** Derselbe Root Cause hat im dritten Live-Lauf noch eine zweite Stelle erwischt -
+   `ecommerce_integrations/channel_propagation.py`s `propagate_to_payment_entry` (before_insert-Hook
+   auf Payment Entry) selektiert `ecommerce_source` roh per SQL aus Sales Invoice, ohne
+   Feld-Existenz-Check - warf `MySQLdb.OperationalError: Unknown column 'ecommerce_source'` bei 1058
+   von 1337 Payment-Entry-Anlagen. An Sitzung B über `~/shared-agent-test.md` gemeldet (2026-08-09),
+   noch nicht bestätigt/deployed. Kein Blocker für den restlichen main.py-Lauf (Payment Entries sind
+   idempotent nachmigrierbar), aber vor dem nächsten vollständigen Cutover-Lauf gegenprüfen.
 
 Ein dritter Live-Lauf (nach Fix von 1./2.) deckte drei weitere reale Bugs auf, alle inzwischen
 behoben:
@@ -138,6 +145,46 @@ behoben:
    da). Da die ~6199 Items im dritten Lauf schon mit dem alten (falschen) Template angelegt waren,
    wurden sie zusätzlich per einmaligem Live-Bulk-Update bereinigt (`taxes`-Kindtabelle geleert;
    Skript nicht im Repo, war ein Wegwerf-Script im Scratchpad).
+6. **Delivery Note buchte trotz `update_stock: 0` im Payload doppelt auf den Lagerbestand.**
+   `delivery_note_migration.py` ging (Docstring sagte das explizit) davon aus, `update_stock: 0`
+   verhindere wie bei Sales Invoice die Lagerbuchung. Live bestätigt: `update_stock` ist auf
+   Delivery Note gar kein echtes Feld (`GET .../Delivery Note?fields=["update_stock"]` liefert
+   `Field not permitted in query`) - ein submitteter Delivery Note bucht in ERPNext IMMER auf den
+   Lagerbestand, dafür gibt es keinen Opt-out. Da `warehouseStockMovement`/Stock Entries exakt
+   dieselben Warenausgänge schon abbilden, hat jeder erfolgreich submittete Delivery Note den
+   Bestand doppelt abgezogen (einmal Stock Entry, einmal Delivery Note) - manifestierte sich im
+   dritten Lauf als `NegativeStockError` bei 1621 von 3190 Lieferungen (die anderen scheiterten
+   erst gar nicht an fehlendem Bestand, buchten also den Doppelabzug klaglos durch). **321 bereits
+   submittete Delivery Notes** existieren dadurch aktuell mit potenziell falschem
+   Lagerbestandseffekt - Korrektur (stornieren+neu als Draft, oder Stock Reconciliation) steht noch
+   aus, siehe "Offene Punkte". Code-Fix: Delivery Note wird jetzt immer als Draft (`docstatus=0`)
+   angelegt, unabhängig von `EN_DEFAULT_INVOICE_STATE` - das ist die einzige Möglichkeit, die
+   Lagerbuchung wirklich zu unterdrücken.
+   **Korrektur durchgeführt (2026-08-09):** Alle 321 betroffenen Delivery Notes wurden storniert
+   (Stock-Ledger-/GL-Auswirkung damit korrekt rückgängig gemacht - das ist der entscheidende
+   Schritt) und anschließend versucht zu löschen: 181 erfolgreich gelöscht, 140 bleiben als
+   stornierter (docstatus=2) Beleg stehen, weil Frappe das Löschen bei verknüpften GL-/Lagerbuch-
+   Einträgen verweigert (`LinkExistsError`) - normales, korrektes Frappe-Verhalten für einen
+   Prüfpfad, kein offener Fehler. **Bekannte Einschränkung:** `_skip_if_exists()` behandelt einen
+   stornierten Beleg als "existiert bereits" - die 140 zugehörigen Sendungen bekommen dadurch beim
+   Neulauf von `migrate_wc_en_shipments()` keinen neuen (aktiven) Delivery Note mehr, nur den
+   stornierten als Altlast. Kein fachliches Problem (Lagerbestand ist korrekt, nur die
+   informelle Tracking-Notiz fehlt für diese ~140 von 3190 Sendungen) - akzeptiert statt mit
+   Rename-Hacks aufwendig repariert.
+7. **`setup_negative_rate_settings()` hat nie wirklich etwas bewirkt - Tippfehler im Feldnamen.**
+   Der Code setzte `allow_negative_rate_for_items` (Singular "rate"), das echte Feld heißt
+   `allow_negative_rates_for_items` (Plural "rates") - live über die DocType-Feldliste von
+   Selling/Buying Settings bestätigt. Frappe verwirft unbekannte Felder bei einem Update
+   stillschweigend (kein Fehler, kein Log-Hinweis) - die Funktion loggte bei jedem Lauf
+   "enabled", ohne dass die Einstellung je wirklich aktiv war. Dadurch schlugen alle Zeilen mit
+   negativem Rabatt-/Gutschrift-Preis in Sales Order/Quotation/Sales Invoice/Purchase-Pendants
+   mit "Für den Artikel ... muss der Einzelpreis eine positive Zahl sein" fehl - im vierten Lauf
+   allein 172 von 194 verbleibenden Sales-Invoice-Fehlern. Fix: Feldname korrigiert, live neu
+   gesetzt und per GET verifiziert (`allow_negative_rates_for_items = 1`). **Für künftige Resets:**
+   dieser Bug war über alle bisherigen Läufe hinweg aktiv - nach jedem Setup-Lauf empfiehlt es
+   sich, sicherheitshalber per GET zu verifizieren, dass eine Single-Doctype-Einstellung wirklich
+   den erwarteten Wert angenommen hat, statt sich auf die Erfolgsmeldung zu verlassen (Frappes
+   Silent-Drop-Verhalten bei unbekannten Feldern gilt für Custom Fields UND normale Feld-Updates).
 
 **Neu: Altrechnungs-Import (`legacy_invoices/`).** Rechnungen, die nur noch als PDF existieren
 (teils vor 2020, teils später - kein Datumsschnitt, sondern "existiert nicht strukturiert in
@@ -176,6 +223,12 @@ bereits erstellten).
   werden 1:1 übernommen) sind für die Zeit nach der Migration noch nicht gelöst.
 - Verträge, SEPA-Mandate, Tickets sind noch nicht migriert (WeClapp-Doctypes existieren, keine
   Migration dafür).
+- **2 Lieferanten mit Fremdwährung (USD: "Openai, Llc", "Frappe Technologies Pvt. Ltd.") scheitern
+  an der Personenkonto-Zuordnung** ("Die Abrechnungswährung muss entweder der Unternehmenswährung
+  oder der Währung des Debitoren-/Kreditorenkontos entsprechen") - `setup_personal_accounts()`
+  legt alle Konten in der Unternehmenswährung (EUR) an, unabhängig von `party.currencyName`. Bei
+  nur 2 von 392 Lieferanten nicht behoben (bräuchte währungsbewusste Kontenanlage) - falls mehr
+  Fremdwährungs-Lieferanten/-Kunden dazukommen, lohnt sich das nachzurüsten.
 
 **Design-Entscheidungen, die bewusst so getroffen wurden (nicht versehentlich unvollständig):**
 - WeClapps volles Buchungsjournal (`accountingTransaction`) wird NICHT als allgemeine Journal Entries

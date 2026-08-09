@@ -181,7 +181,10 @@ class CustomerMigration(BaseMigration):
         number = party.get("customerDebtorAccountNumber") if party else None
         if not number:
             return []
-        label = party.get("company") or self._map_customer_name()
+        # .strip(): some WeClapp company names carry trailing whitespace, which would otherwise
+        # silently diverge from the name setup.setup_personal_accounts() computes for the same
+        # account (confirmed live: "Sattlerei Gawenda " caused a LinkValidationError).
+        label = (party.get("company") or self._map_customer_name()).strip()
         account_name = f"{ERPNextHelper.get_wc_account_name(number, label)} - {config.EN_COMPANY_ABBR}"
         return [{"company": config.EN_COMPANY, "account": account_name}]
 
