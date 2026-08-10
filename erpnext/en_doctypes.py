@@ -27,3 +27,4 @@ class ERPNextDocType(DocType):
     JOURNAL_ENTRY       = "Journal Entry"
     COMMUNICATION       = "Communication"
     FISCAL_YEAR         = "Fiscal Year"
+    PAYMENT_TERMS_TEMPLATE = "Payment Terms Template"

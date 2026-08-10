@@ -6,6 +6,16 @@ class ContactMigration(BaseMigration):
     """Migration wrapper for address objects from WeClapp to ERPNext.
     """
 
+    # WeClapp salutation -> ERPNext Salutation doctype name. ERPNext ships a fixed default set
+    # (Mr, Ms, Mx, Dr, Mrs, Madam, Miss, Master, Prof - confirmed live) - only MR/MRS occur often
+    # enough in this instance's data to have an obvious match (~1145/152 occurrences across
+    # customer/supplier/contact.json); NO_SALUTATION/COMPANY/FAMILY/missing have no clean
+    # equivalent and are deliberately left unmapped (None) rather than guessed.
+    _SALUTATION_MAP = {
+        "MR": "Mr",
+        "MRS": "Mrs",
+    }
+
     def __init__(self, en_api: ERPNextAPI, wc_data: dict, wc_customer_data: dict = None, wc_custom_attribute_definitions: dict = None):
         """Initializes the contact migration.
 
@@ -47,6 +57,9 @@ class ContactMigration(BaseMigration):
             "last_name"             : self.wc_data.get("lastName", str()),
             "is_primary_contact"    : self.is_primary(),
             "status"                : "Passive",
+            "salutation"            : self._SALUTATION_MAP.get(self.wc_data.get("salutation")),
+            "designation"           : self.wc_data.get("title") or None,
+            "wc_fax"                : self.wc_data.get("fax") or None,
             "email_ids"             : self._map_emails(),
             "phone_nos"             : self._map_phone_nos()
         }
@@ -57,16 +70,26 @@ class ContactMigration(BaseMigration):
         return transformed_data
     
     def _map_emails(self) -> list:
-        """Maps the email addresses from WeClapp to ERPNext.
+        """Maps the email addresses from WeClapp to ERPNext. "emailHome" is a distinct secondary
+        address WeClapp carries alongside the primary "email" - added as a non-primary entry,
+        skipped if identical to the primary (some WeClapp records duplicate the same address into
+        both fields).
 
         Returns:
             list: List of email addresses
         """
         emails = list()
-        if self.wc_data.get("email", None):
+        primary = self.wc_data.get("email", None)
+        if primary:
             emails.append({
-                "email_id"  : self.wc_data.get("email", str()),
+                "email_id"  : primary,
                 "is_primary": True
+            })
+        home = self.wc_data.get("emailHome", None)
+        if home and home != primary:
+            emails.append({
+                "email_id"  : home,
+                "is_primary": False
             })
         return emails
     

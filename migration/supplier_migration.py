@@ -53,6 +53,16 @@ class SupplierMigration(BaseMigration):
         existing = self._en_api.get(ERPNextDocType.SUPPLIER, en_data.get("name"))
         if existing:
             update_data = {k: v for k, v in en_data.items() if k != "name"}
+            # Backfill a missing primary contact on an already-existing supplier (see
+            # _map_self_contact()) - the "create" branch below only runs once, on first
+            # creation, so a supplier created before this fix existed would otherwise never
+            # pick it up even on a fresh, idempotent re-run.
+            if not existing.get("supplier_primary_contact"):
+                self_contact_data = self._map_self_contact()
+                if self_contact_data:
+                    en_self_contact = self._en_api.create(ERPNextDocType.CONTACT, self_contact_data)
+                    self._link_contacts(existing, [en_self_contact])
+                    update_data["supplier_primary_contact"] = en_self_contact["name"]
             return self._en_api.update(ERPNextDocType.SUPPLIER, en_data.get("name"), update_data)["data"]
 
         # Addresses
@@ -91,6 +101,18 @@ class SupplierMigration(BaseMigration):
             en_contacts.append(en_invoice_contact)
             if "supplier_primary_contact" not in en_data:
                 en_data["supplier_primary_contact"] = en_invoice_contact["name"]
+
+        # Fallback "self" contact (see _map_self_contact()) - only if nothing above already
+        # produced a primary contact. Without this, ERPNext's Supplier.email_id/mobile_no
+        # (read-only, fetched from supplier_primary_contact - confirmed live) simply stay empty
+        # for any supplier with no WeClapp contacts[] entries and no invoice-email override, even
+        # though WeClapp clearly has an email/phone for them.
+        if "supplier_primary_contact" not in en_data:
+            self_contact_data = self._map_self_contact()
+            if self_contact_data:
+                en_self_contact = self._en_api.create(ERPNextDocType.CONTACT, self_contact_data)
+                en_contacts.append(en_self_contact)
+                en_data["supplier_primary_contact"] = en_self_contact["name"]
 
         # Create supplier in ERPNext
         en_supplier = self._en_api.create(ERPNextDocType.SUPPLIER, en_data)
@@ -152,6 +174,16 @@ class SupplierMigration(BaseMigration):
             "supplier_details"  : self._map_notes_and_comments() or None,
             # Individual sub-ledger account (Personenkonto, see setup.setup_personal_accounts())
             "accounts"          : self._map_creditor_account(),
+            # Payment Terms Template (see setup.setup_payment_terms()) - the WeClapp string
+            # itself is the ERPNext document name (autoname: field:template_name), no separate
+            # mapping needed
+            "payment_terms"     : (self.wc_data.get("termOfPaymentName") or "").strip() or None,
+            # WeClapp payment method (e.g. "Lastschrift", "Vorkasse") - no native ERPNext
+            # Supplier field for this, see setup.setup_customer_supplier_extra_fields()
+            "wc_zahlungsart"    : self.wc_data.get("paymentMethodName") or None,
+            # No wc_opt_in_* here on purpose: supplier.json has no optIn/optInLetter/optInPhone/
+            # optInSms fields at all (confirmed against the full field list) - marketing consent
+            # is a WeClapp customer-only concept, doesn't exist on the supplier side.
         }
 
         # Custom Attributes (Zusatzfelder)
@@ -159,15 +191,64 @@ class SupplierMigration(BaseMigration):
 
         return transformed_data
 
-    def _map_notes_and_comments(self) -> str:
-        """Combines the "description" field (_map_wc_notes()) with WeClapp's separately-fetched
-        linked comments (_map_wc_comments()) for this supplier's party id into a single string
-        for ERPNext's native "supplier_details" field (plain Text, not Text Editor - description
-        is WeClapp rich-text HTML and needs stripping to avoid literal tags showing up).
+    def _map_self_contact(self) -> dict:
+        """Builds a Contact dict representing this supplier's own identity. Mirror of
+        CustomerMigration._map_self_contact() - see there for the full rationale.
+
+        Returns:
+            dict: Contact data, or None if there's no usable name or contact info at all
         """
-        notes = ERPNextHelper.strip_html(self._map_wc_notes(fields=("description",)))
+        first_name = self.wc_data.get("firstName") or str()
+        last_name = self.wc_data.get("lastName") or str()
+        if not (first_name or last_name):
+            if not self._is_company():
+                return None
+            first_name = "Hauptkontakt"
+            last_name = self._map_supplier_name()
+        email = self.wc_data.get("email")
+        home_email = self.wc_data.get("emailHome")
+        phone = ERPNextHelper.standardize_phone_number(self.wc_data.get("phone", str()))
+        mobile = ERPNextHelper.standardize_phone_number(self.wc_data.get("mobilePhone1", str()))
+        if not (email or home_email or phone or mobile):
+            return None
+        email_ids = []
+        if email:
+            email_ids.append({"email_id": email, "is_primary": True})
+        if home_email and home_email != email:
+            email_ids.append({"email_id": home_email, "is_primary": not bool(email)})
+        phone_nos = []
+        if phone:
+            phone_nos.append({"phone": phone, "is_primary_phone": True})
+        if mobile:
+            phone_nos.append({"phone": mobile, "is_primary_mobile_no": True})
+        return {
+            "first_name": first_name,
+            "last_name": last_name,
+            "is_primary_contact": True,
+            "status": "Passive",
+            "salutation": ContactMigration._SALUTATION_MAP.get(self.wc_data.get("salutation")),
+            "designation": self.wc_data.get("title") or None,
+            "wc_fax": self.wc_data.get("fax") or None,
+            "email_ids": email_ids,
+            "phone_nos": phone_nos,
+        }
+
+    def _map_notes_and_comments(self) -> str:
+        """Combines three distinct WeClapp note sources into a single string for ERPNext's native
+        "supplier_details" field (plain Text, not Text Editor - all three are/can be WeClapp
+        rich-text HTML and need stripping to avoid literal tags showing up):
+        - party.supplierInternalNote - the actual "Interne Notiz" field shown in WeClapp's
+          supplier master data view. Only exposed on the richer "party" entity, NOT on
+          supplier.json itself (see CustomerMigration._map_notes_and_comments() for the same
+          finding on the customer side - confirmed live the same way).
+        - supplier.description (_map_wc_notes()) - a separate, rarely-used free-text field.
+        - WeClapp's separately-fetched linked comments (_map_wc_comments()).
+        """
+        party = self._get_party()
+        internal_note = ERPNextHelper.strip_html(party.get("supplierInternalNote")) if party else str()
+        description = ERPNextHelper.strip_html(self._map_wc_notes(fields=("description",)))
         comments = self._map_wc_comments(self.wc_comments.get(self.wc_data.get("id"), []))
-        return "\n".join(p for p in (notes, comments) if p)
+        return "\n".join(p for p in (internal_note, description, comments) if p)
 
     def _get_party(self) -> dict:
         """Resolves this supplier's richer WeClapp party record (supplier.id == party.id,

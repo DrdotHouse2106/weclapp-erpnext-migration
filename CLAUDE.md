@@ -361,6 +361,76 @@ ihre eigenen Custom Fields/Notifications auf einer wirklich frischen Site sauber
     15655 (customerNumber) verifiziert: `customer_details` enthält jetzt korrekt
     "2024-05-13 (info@francetec.de): Reifen je 3€ Netto". Abgeschlossen, kein offener Punkt mehr.
 
+11. **Kritischer, vorher unentdeckter Bug: E-Mail/Telefon erreichten ~73 % der Kunden nie in
+    ERPNext.** Beim Nachforschen zu weiteren, vom Nutzer gewünschten Feldern (siehe unten)
+    entdeckt: `Customer.email_id`/`mobile_no` sind in ERPNext **Read-Only-Felder mit
+    `fetch_from: customer_primary_contact.email_id`/`.mobile_no`** - sie spiegeln IMMER den
+    primären Kontakt, sind nicht direkt beschreibbar. `customer_migration.py`/
+    `supplier_migration.py` haben aber nie einen Kontakt angelegt, wenn WeClapps `contacts[]`
+    leer war und keine abweichende Rechnungs-E-Mail existierte - live gemessen: **5643 von 5739
+    Kunden haben ein leeres `contacts[]`, davon 4202 mit einer echten WeClapp-E-Mail**, die dadurch
+    nie nach ERPNext gelangte (`customer_primary_contact` blieb `None`, `email_id`/`mobile_no`
+    blieben leer). Nebenbefund: `customer_migration.py`s `_transform()` versuchte zusätzlich
+    `"phone"`/`"email"` direkt auf Customer zu setzen - live bestätigt, dass **keines von beiden
+    ein echtes Customer-Feld ist** (Frappe verwirft beide seit jeher stillschweigend), diese
+    beiden toten Zeilen wurden entfernt (Supplier nutzt korrekterweise `mobile_no`/`email_id`,
+    die echten - wenn auch fetch_from-gesteuerten - Feldnamen, dort nicht angefasst).
+    **Fix:** neue `_map_self_contact()` in beiden Migrationsklassen - baut einen Contact aus der
+    Partei's eigenen Feldern (firstName/lastName, bei fehlendem Namen auf COMPANY-Typ
+    `"Hauptkontakt"` + Firmenname zurückfallend, analog zum bestehenden "Rechnungsversand"-Muster),
+    wird als `customer_primary_contact`/`supplier_primary_contact` gesetzt, aber NUR falls weder
+    ein echter WeClapp-Kontakt noch die Rechnungs-E-Mail-Override-Logik bereits einen geliefert
+    hat. **Wichtig:** das musste zusätzlich in den Upsert-Zweig von `migrate()` eingebaut werden
+    (nicht nur den "neu anlegen"-Zweig) - da bei diesem Projektstand bereits alle 5739/392
+    Kunden/Lieferanten existieren, hätte ein reiner Re-Run über den Create-Zweig nie gegriffen;
+    der Upsert-Zweig prüft jetzt `if not existing.get("customer_primary_contact")` und legt den
+    Kontakt nachträglich an. Live-Backfill-Lauf: 5739/5739 bzw. 392/392, 0 failed (2 einmalige
+    transiente Frappe-Cloud-Fehler beim ersten Versuch - "Kontakt X nicht gefunden" direkt nach
+    Kontakt-Anlage+Verknüpfung, beim manuellen Sofort-Retry ohne Codeänderung sofort erfolgreich;
+    beim zweiten vollen Lauf 0 Fehler). Live verifiziert an Kunde 15040 (Christian Seipold,
+    Beispiel aus der Nutzermeldung): `email_id` zeigt jetzt korrekt `m.bagnole@yahoo.de`.
+
+12. **Sechs vom Nutzer explizit angeforderte zusätzliche Felder** (nach einer Bestandsaufnahme
+    aller ~158 `party.json`-Felder gegen das, was migriert wird - siehe Punkt 11 oben, das war der
+    wichtigste Fund dabei): `termOfPaymentName`, `paymentMethodName`, `salutation`/`title`,
+    `blockNotice`, `optIn*`, `emailHome`/`fax`/`mobilePhone1`. Alle live implementiert und
+    verifiziert:
+    - **`termOfPaymentName`** (Zahlungsbedingungen, z.B. "net 14", "3/14 net 90") → ERPNexts
+      natives `payment_terms`-Link-Feld auf Customer/Supplier. Neue `setup.setup_payment_terms()`
+      legt pro distinktem WeClapp-Wert (9 insgesamt über customer.json+supplier.json) ein Payment
+      Terms Template an - `_parse_wc_payment_term()` parst WeClapps Kurzform ("net N" →
+      `credit_days=N`; "X/Y net Z" → zusätzlich `discount`/`discount_validity` auf derselben
+      Zeile), gegen alle real vorkommenden Werte vor dem Schreiben verifiziert. Autoname ist
+      `field:template_name`, d.h. der WeClapp-String selbst ist der ERPNext-Dokumentname - keine
+      separate Mapping-Tabelle nötig.
+    - **`paymentMethodName`** (z.B. "Auf Rechnung", "PayPal", "Lastschrift") → neues Custom Field
+      `wc_zahlungsart` auf Customer/Supplier (kein natives ERPNext-Äquivalent gefunden).
+    - **`salutation`/`title`** → `Contact.salutation` (Link auf ERPNexts Standard-Salutation-Werte
+      - nur `MR`→`Mr`/`MRS`→`Mrs` sauber gemappt, `NO_SALUTATION`/`COMPANY`/`FAMILY`/fehlend
+      bewusst ungemappt statt geraten, siehe `ContactMigration._SALUTATION_MAP`) und
+      `Contact.designation` (Data, für WeClapps `title`, z.B. "Dr.-Ing.").
+    - **`blockNotice`** (Sperrgrund-Freitext, nur auf Customer, kein Supplier-Äquivalent im Schema)
+      → als "Sperrgrund: ..." in `customer_details` (siehe Punkt 9/`_map_notes_and_comments()`).
+    - **`emailHome`/`fax`/`mobilePhone1`** → `emailHome` als sekundäre (nicht-primäre)
+      `Contact.email_ids`-Zeile; `mobilePhone1` wie bisher schon für echte WeClapp-Kontakte
+      (`ContactMigration._map_phone_nos()`); `fax` als neues Custom Field `Contact.wc_fax` (kein
+      natives Fax-Feld auf Contact).
+    - **`optIn`/`optInLetter`/`optInPhone`/`optInSms`** (Marketing-Einwilligungen) → vier neue
+      Custom Fields `wc_opt_in_email`/`_letter`/`_phone`/`_sms` auf Customer (**nicht** Supplier -
+      supplier.json hat diese Felder gar nicht, live bestätigt). Bewusst NICHT in ERPNexts native
+      `Contact.unsubscribed` geschrieben (nur E-Mail, ein einzelnes generisches Flag) - die vier
+      Felder liegen direkt auf Customer, u.a. damit das Shopware-Sync-Plugin
+      (`ecommerce_integrations`) sie ohne Link-Traversierung lesen kann; an
+      `~/shared-agent-test.md` für die andere Sitzung dokumentiert. **Wichtiger Befund beim
+      Live-Verifizieren:** `optIn` ist bei **allen** 5739 gecachten Kunden `false` - in dieser
+      WeClapp-Instanz hat aktuell niemand aktiv einer E-Mail-Marketing-Einwilligung zugestimmt
+      (oder das Feld wird auf WeClapp-Seite schlicht nicht genutzt). Technisch korrekt migriert,
+      aber ohne einen einzigen "true"-Fall in den Live-Daten nicht end-to-end mit einem positiven
+      Beispiel verifizierbar gewesen - nur der (durchgängige) negative Fall.
+    Neuer, ebenfalls neuer Helper `ERPNextHelper.strip_html()` musste zusätzlich mehrfach
+    unescapen (nicht nur einmal) - siehe Punkt 9, dieselbe Methode wird hier für `customer_details`
+    weiterverwendet, keine neue Logik nötig.
+
 **Design-Entscheidungen, die bewusst so getroffen wurden (nicht versehentlich unvollständig):**
 - WeClapps volles Buchungsjournal (`accountingTransaction`) wird NICHT als allgemeine Journal Entries
   importiert (würde ERPNexts eigene GL-Buchungen beim Rechnungs-Submit doppeln). Nur gezielt für
