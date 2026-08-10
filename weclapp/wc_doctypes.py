@@ -19,7 +19,11 @@ class WeClappDocType(DocType):
     CAMPAIGN = "campaign"
     CAMPAIGN_PARTICIPANT = "campaignParticipant"
     CASH_ACCOUNT = "cashAccount"
-    #COMMENT = "comment"                                         # TODO: get linked comments
+    # COMMENT deliberately not listed here: the "comment" endpoint has no bulk/list-all mode (it
+    # requires entityName+entityId per call, confirmed live - a plain get_all("comment") 400s
+    # with "missing parameter: entityName"), so it can't go through cache_all()'s generic
+    # per-doctype loop. Cached separately, per party id, by WcCacheWrapper._cache_comments() -
+    # see WeClappAPI.get_comments().
     COMMERCIAL_LANGUAGE = "commercialLanguage"
     COMPANY_SIZE = "companySize"
     CONTACT = "contact"

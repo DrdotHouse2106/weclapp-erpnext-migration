@@ -65,7 +65,7 @@ Vor jedem `git add`/Push kurz `git status` prüfen, dass keine dieser Dateien au
 `"Your Company"`/`"YC"`, keine echten Firmennamen/Kontodaten) – siehe Historie, das war zwischenzeitlich
 mit echten FranceTec-Daten befüllt und wurde bewusst zurückgebaut.
 
-## Aktueller Stand (zuletzt aktualisiert: 2026-08-09)
+## Aktueller Stand (zuletzt aktualisiert: 2026-08-10)
 
 Der Nutzer hat ERPNext einmal komplett zurückgesetzt (Migrations-Daten/Masterdata entfernt, die
 Basis-Struktur – Kontenplan, Kostenstellen, Steuervorlagen, Konten-Übergruppen – blieb erhalten)
@@ -237,13 +237,16 @@ bereits erstellten).
    Migrieren. Kein Datenverlust (Stock Entries decken den eigentlichen Lagerbestand ab), nur die
    Tracking-Notiz fehlt für diese 2 Positionen.
 
-**Live-Migration abgeschlossen (2026-08-09).** Nach acht main.py-Läufen (siehe die Bugfixes 1-9
-oben, jeweils zwischen den Läufen behoben) hat sich das Ergebnis über die letzten beiden Läufe
-identisch stabilisiert - das ist der Endzustand, weitere Re-Runs bringen nichts mehr:
-Customer/Item/Stock Entry/Quotation/Sales Invoice/Purchase Order bei 0 Fehlern, Supplier 2/392,
-Sales Order 1/3405, Delivery Note 2/3190, Purchase Invoice 3/2800, Payment Entry 382 von 7916
-(siehe unten - akzeptiertes Limit, kein Bug). Die verbleibenden Restfehler sind einzeln geprüft
-und verstanden (siehe "Offene Punkte").
+**Live-Migration abgeschlossen (2026-08-09).** Neun main.py-Läufe insgesamt (siehe Bugfixes 1-9
+oben). Lauf 9 (mit Währungs- und Gutschriften-Vorzeichen-Fix aktiv) bestätigt den Endzustand:
+Customer 5739/5739, Supplier 392/392, Item/Stock Entry/Quotation/Sales Invoice/Purchase
+Order/Purchase Invoice-Kern bei 0 Fehlern, Sales Order 1/3405, Delivery Note 2/3190,
+Purchase Invoice 3/2800, Payment Entry/Journal Entry zusammen 262 von 7916 (vorher 382 - der
+Rückgang um exakt 120 bestätigt den Gutschriften-Vorzeichen-Fix zahlenmäßig; die verbleibenden
+262 sind ausschließlich "Betrag übersteigt offenen Betrag"-Fälle, also die schon identifizierte
+akzeptierte Restkategorie, kein neuer Bug). Die verbleibenden Restfehler sind einzeln geprüft
+und verstanden (siehe "Offene Punkte"). Weitere Re-Runs gegen dieselbe Instanz bringen nichts
+mehr - das ist der Endzustand.
 
 **Vom Nutzer entschiedener Scope (2026-08-09) - das hier ist NICHT vergessen, sondern bewusst so
 belassen:**
@@ -267,18 +270,96 @@ belassen:**
   `party.currencyName`, wenn die von `config.EN_DEFAULT_CURRENCY` abweicht (statt immer EUR).
   Die beiden bereits live existierenden Konten (70022 "Openai, Llc", 70392 "Frappe Technologies
   Pvt. Ltd") wurden zusätzlich per Update auf USD nachgezogen.
-- ~~382 Payment Entries lösen sich nicht auf ein echtes Bankkonto auf~~ **davon ~120 behoben
-  (2026-08-09):** Root Cause war KEIN generelles Matching-Problem, sondern ein Vorzeichenfehler
-  bei Zahlungen auf Gutschriften (`is_return=1`) - deren `outstanding_amount` ist bereits negativ,
-  ein positiv gebuchter Betrag wird von ERPNext zu Recht als "größer als der ausstehende Betrag"
-  abgelehnt (live bestätigt: 120 von 196 betroffenen Rechnungen waren Gutschriften). Fix in
-  `_transform_payment()` (negiert `amount`, wenn `en_invoice.is_return`) und in
-  `_transform_writeoff()` (kehrt Soll/Haben um, gleicher Grund). Die verbleibenden ~76 Fälle sind
-  echte WeClapp-Dateninkonsistenzen bei regulären (nicht-Gutschrift) Rechnungen - Zahlung
-  übersteigt den tatsächlichen offenen Betrag unabhängig vom Vorzeichen; das bleibt ein
-  akzeptiertes Limit der Rechnungsnummer+Betrag-Matching-Heuristik.
+- ~~382 Payment Entries lösen sich nicht auf ein echtes Bankkonto auf~~ **120 behoben, Rest
+  bestätigt akzeptiertes Limit (2026-08-09, verifiziert über Lauf 9):** Root Cause war KEIN
+  generelles Matching-Problem, sondern ein Vorzeichenfehler bei Zahlungen auf Gutschriften
+  (`is_return=1`) - deren `outstanding_amount` ist bereits negativ, ein positiv gebuchter Betrag
+  wird von ERPNext zu Recht als "größer als der ausstehende Betrag" abgelehnt (live bestätigt:
+  120 von 196 betroffenen Rechnungen waren Gutschriften). Fix in `_transform_payment()` (negiert
+  `amount`, wenn `en_invoice.is_return`) und in `_transform_writeoff()` (kehrt Soll/Haben um,
+  gleicher Grund). Lauf 9 bestätigt den Fix zahlenmäßig exakt: 382 → 262 Fehler, Differenz genau
+  120. Die verbleibenden 262 (Payment+Journal Entry zusammen) sind ausnahmslos "Betrag übersteigt
+  offenen Betrag" bei regulären (nicht-Gutschrift) Rechnungen - echte WeClapp-Dateninkonsistenzen,
+  akzeptiertes Limit der Rechnungsnummer+Betrag-Matching-Heuristik, kein weiterer Code-Fix
+  vorgesehen.
 - `disable_legacy_warehouses()` als manueller Cutover-Schritt steht noch aus (siehe main.py) -
   sinnvoll erst, wenn der Nutzer die Migration final für abgeschlossen erklärt.
+
+**`bench reinstall`-Bereitschaft (2026-08-09):** Ausgangspunkt laut Nutzer ist eine Instanz mit
+nur Company "FranceTec" + SKR03-Kontenplan, sonst nichts. `setup_accounts()` legte bisher nur
+das OSS-Konto (1767) an - die 4 COVID-Übergangskonten (8339/1775 16 %, 8309/1769 5 %), die
+`legacy_invoices/import_legacy_invoices.py`s `TAX_MAPPING` voraussetzt, existierten nur durch
+ein untracked Wegwerf-Script aus einer früheren Session, nicht in `setup.py` selbst - bei einem
+echten Reinstall wären sie also gefehlt. Gefixt: `setup_accounts()` legt jetzt alle 5 Konten
+über eine Liste an, live einzeln standalone gegen die echte Instanz verifiziert (alle 5 melden
+korrekt "exists"). **Wichtig:** Lauf 9 selbst zeigt in seinem Log noch das alte Verhalten (nur
+1 Konto-Zeile), weil der Lauf schon gestartet war, bevor dieser Fix geschrieben wurde (Python
+lädt `.py`-Änderungen nicht in einen bereits laufenden Prozess nach) - der Fix liegt aber auf
+der Platte und greift beim nächsten frischen `setup.py`-Aufruf, also ab dem ersten Lauf nach dem
+geplanten Reinstall. Mit diesem Fix ist `run_setup()` vollständig: alle Konten/Gruppen/Einstellungen,
+die `main.py` voraussetzt, werden von `setup.py` selbst und idempotent erzeugt - kein bekannter
+manueller Handgriff mehr offen vor einem `main.py`-Lauf gegen eine frisch zurückgesetzte Instanz.
+Einzige verbleibende Unbekannte: ob die fremde App `ecommerce_integrations` (siehe "Sonstiges")
+ihre eigenen Custom Fields/Notifications auf einer wirklich frischen Site sauber (re-)installiert
+- außerhalb der Kontrolle dieses Projekts, nach dem Reinstall kurz gegenprüfen.
+
+10. **WeClapps verknüpfte Kommentare ("Kommentare"-Feature) wurden nie migriert - kompletter,
+    lange unentdeckter Gap.** Vom Nutzer gemeldet (2026-08-10): interne Hinweise an Kunden (Beispiel
+    "Markus Decker") fehlen in ERPNext. Root Cause: `wc_doctypes.py` hatte von der ursprünglichen
+    Vorlage einen auskommentierten `#COMMENT = "comment"  # TODO: get linked comments` - nie
+    umgesetzt. Das ist ein eigenständiges WeClapp-Feature, komplett getrennt vom bereits migrierten
+    `description`-Feld (`_map_wc_notes()`) - live gegen die echte API bestätigt: Kunde 91364
+    ("KFZ-Reparaturwerkstatt Decker", dessen Adresse den Namen "Markus Decker" trägt) hat einen
+    echten WeClapp-Kommentar ("Reifen je 3€ Netto"), der nur über einen separaten Endpunkt
+    (`GET /comment?entityName=...&entityId=...`) abrufbar ist - **kein Bulk-/List-all-Modus**,
+    `entityName`+`entityId` sind Pflichtparameter pro Aufruf. Live außerdem bestätigt: Customer- und
+    Supplier-Kommentare hängen beide am selben zugrundeliegenden WeClapp-`party`-Datensatz
+    (`entityName=customer`/`entityName=supplier`/`entityName=party` liefern für dieselbe ID
+    identische Ergebnisse) - ~43 Parteien in dieser Instanz sind gleichzeitig Kunde und Lieferant,
+    ein naiver Precache pro Doctype hätte deren Kommentare doppelt abgerufen/gespeichert.
+    **Scope-Entscheidung des Nutzers:** nur Kunden + Lieferanten (nicht Belege wie Aufträge/
+    Rechnungen) - der Endpunkt-Zwang zu Einzelabfragen hätte bei voller Breite (~25.000+ Belege)
+    den Cache-Lauf spürbar verlängert.
+    **Implementiert:** `WeClappAPI.get_comments(entity_name, id)` (neue Methode, GET-only wie der
+    Rest des Clients); `WcCacheWrapper.comment_doctypes`/`_cache_comments()` sammelt die
+    deduplizierte Vereinigung der Customer-/Supplier-IDs während des Haupt-Cache-Loops und fragt
+    danach einmal pro eindeutiger Partei-ID mit `entityName="party"` ab, statt pro Doctype (vermeidet
+    die Doppel-Abfrage der 43 Überschneidungen); Ergebnis landet in `comment.json`, gruppiert nach
+    `entityId` über `WcCacheApi.get_comments()`. `BaseMigration._map_wc_comments()` formatiert die
+    Kommentare (sortiert nach Datum) als Klartext-Zeilen mit Datum+Autor.
+    **Korrektur (2026-08-10, noch am selben Tag):** erste Implementierung schrieb in ein neues
+    Custom Field `wc_interne_notiz` (analog zu den Belegarten) - der Nutzer meldete daraufhin,
+    die Notiz sei in ERPNexts eigenem Kundenformular ("Internal notes about this customer. Not
+    visible on transactions or the portal.") nicht sichtbar. Live geprüft: Customer/Supplier
+    haben dafür längst eigene native Felder (`customer_details`/`supplier_details`, beide
+    `fieldtype: "Text"`, exakt diese Beschriftung) - kein anderes migriertes Doctype hat ein
+    Äquivalent. Umgestellt: `CustomerMigration`/`SupplierMigration._map_notes_and_comments()`
+    schreiben jetzt direkt in `customer_details`/`supplier_details`; `setup_internal_note_fields()`
+    erzeugt das `wc_interne_notiz`-Custom-Field nur noch für die 6 Belegarten ohne natives
+    Pendant (Customer/Supplier aus der Liste entfernt); die zuvor angelegten
+    `Customer-wc_interne_notiz`/`Supplier-wc_interne_notiz`-Custom-Fields (samt Section Break)
+    wurden live wieder gelöscht. Da `customer_details`/`supplier_details` reines `Text` sind
+    (kein `Text Editor`/Rich-Text), musste HTML aus WeClapps `description` zusätzlich in Klartext
+    gewandelt werden: neue `ERPNextHelper.strip_html()` - dabei live entdeckt, dass WeClapps
+    `description`-Feld **doppelt HTML-encodiert** vorliegt (roher Cache-Wert enthält buchstäblich
+    `&amp;Uuml;` und `&lt;br /&gt;`, also einmal escapte Escapes) - `strip_html()` unescaped
+    deshalb wiederholt bis zum Fixpunkt (begrenzt auf 5 Durchläufe), erst danach werden
+    `<br>`/`</p>` in Zeilenumbrüche gewandelt und verbleibende Tags entfernt. Live an allen 12
+    Kunden-/8 Lieferanten-Beschreibungen mit echtem Inhalt verifiziert (u. a. Umlaute, mehrzeilige
+    Inhalte). Zwei Lieferanten-Beschreibungen enthalten literale "?"-Zeichen an Stellen, wo
+    vermutlich ein "€" gemeint war - bestätigt bereits so in WeClapps Rohdaten vorhanden (keine
+    Beschädigung durch die Migration, bewusst nicht "korrigiert", da nur geraten werden könnte).
+    **Live-Backfill (2026-08-10):** da `cache_weclapp.py` den kompletten Cache verwirft und neu
+    aufbaut (Stunden-Aufwand), wurde stattdessen ein einmaliges Wegwerf-Script gegen die
+    *bestehende* `customer.json`/`supplier.json` gefahren, das nur `comment.json` befüllt (~6100
+    Einzelabfragen, ~0.09s/Call, ~9-10 Min. Laufzeit) - ein regulärer künftiger `cache_weclapp.py`-
+    Lauf deckt das jetzt aber automatisch mit ab (`comment_doctypes` ist Teil von `cache_all()`).
+    Ergebnis: 15 von 6088 Parteien haben tatsächlich einen Kommentar (Kunde 91364 = "Markus
+    Decker"-Fall aus der Nutzermeldung war dabei). Customer-/Supplier-Migration danach zweimal
+    erneut gelaufen (idempotent, upsertet über `existing = en_api.get(...)` - jeweils 5739/5739
+    bzw. 392/392, 0 failed; zweiter Lauf nach dem strip_html()-Fix oben) und live gegen Kunde
+    15655 (customerNumber) verifiziert: `customer_details` enthält jetzt korrekt
+    "2024-05-13 (info@francetec.de): Reifen je 3€ Netto". Abgeschlossen, kein offener Punkt mehr.
 
 **Design-Entscheidungen, die bewusst so getroffen wurden (nicht versehentlich unvollständig):**
 - WeClapps volles Buchungsjournal (`accountingTransaction`) wird NICHT als allgemeine Journal Entries

@@ -11,7 +11,7 @@ class CustomerMigration(BaseMigration):
     """
 
     def __init__(self, en_api: ERPNextAPI, wc_data: dict, wc_custom_attribute_definitions: dict,
-                 wc_parties: dict = None):
+                 wc_parties: dict = None, wc_comments: dict = None):
         """Initializes the migration wrapper.
 
         Args:
@@ -20,9 +20,14 @@ class CustomerMigration(BaseMigration):
             wc_parties (dict, optional): WeClapp parties keyed by id (see WcCacheApi.get_parties()) -
                 carries the customer's individual sub-ledger account (Personenkonto) and any
                 distinct invoice-email override, neither of which customer.json itself exposes.
+            wc_comments (dict, optional): WeClapp linked comments ("Kommentare"), keyed by party
+                id (see WcCacheApi.get_comments()) - WeClapp's general-purpose internal-note
+                feature, separate from the "description" field already covered by
+                BaseMigration._map_wc_notes().
         """
         super().__init__(en_api, wc_data, wc_custom_attribute_definitions)
         self.wc_parties = wc_parties or {}
+        self.wc_comments = wc_comments or {}
 
     def get_doctype(self) -> ERPNextDocType:
         return ERPNextDocType.CUSTOMER
@@ -146,9 +151,10 @@ class CustomerMigration(BaseMigration):
             # flags are applied afterwards by main.py's apply_wc_blocks() final phase.
             "disabled"                      : 0,
             "is_frozen"                     : 0,
-            # Interne Notiz (see setup.setup_internal_note_fields) - Customer only has
-            # "description", not recordFreeText/recordOpening/note like transactional documents
-            "wc_interne_notiz"              : self._map_wc_notes(fields=("description",)) or None,
+            # ERPNext's own native "Internal notes about this customer" field - not a custom
+            # field, see _map_notes_and_comments(). Combines WeClapp's "description" with its
+            # separately-fetched linked comments ("Kommentare", see _map_wc_comments()).
+            "customer_details"              : self._map_notes_and_comments() or None,
             # Individual sub-ledger account (Personenkonto, see setup.setup_personal_accounts())
             "accounts"                      : self._map_debtor_account(),
         }
@@ -157,6 +163,16 @@ class CustomerMigration(BaseMigration):
         transformed_data.update(self._map_custom_attributes())
 
         return transformed_data
+
+    def _map_notes_and_comments(self) -> str:
+        """Combines the "description" field (_map_wc_notes()) with WeClapp's separately-fetched
+        linked comments (_map_wc_comments()) for this customer's party id into a single string
+        for ERPNext's native "customer_details" field (plain Text, not Text Editor - description
+        is WeClapp rich-text HTML and needs stripping to avoid literal tags showing up).
+        """
+        notes = ERPNextHelper.strip_html(self._map_wc_notes(fields=("description",)))
+        comments = self._map_wc_comments(self.wc_comments.get(self.wc_data.get("id"), []))
+        return "\n".join(p for p in (notes, comments) if p)
 
     def _get_party(self) -> dict:
         """Resolves this customer's richer WeClapp party record (customer.id == party.id,

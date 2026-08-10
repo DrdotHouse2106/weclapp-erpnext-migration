@@ -8,7 +8,7 @@ Ursprünglich basierend auf einer Vorlage von [fglashauser](https://github.com/f
 
 ### Wichtiger Hinweis
 
-Das Projekt ist noch nicht abgeschlossen und befindet sich in aktiver Entwicklung – siehe "Nächste Schritte" unten für offene Punkte.
+Die eigentliche Datenmigration ist abgeschlossen und lief erfolgreich gegen eine produktive ERPNext-Instanz durch – siehe "Nächste Schritte" unten für die (bewusst) nicht umgesetzten Teile und verbleibende manuelle Cutover-Schritte.
 
 ## Wie es funktioniert
 
@@ -31,13 +31,15 @@ Jeder Migrationsschritt ist idempotent: ERPNext-Dokumente werden mit determinist
 Idempotentes, einmaliges Anlegen der ERPNext-Stammdaten, die vor der eigentlichen Migration existieren müssen:
 
 - Zusatzfelder (Custom Fields), generisch aus WeClapps `customAttributeDefinition` abgeleitet, inklusive eines von Hand modellierten Tab-/Sektions-/Spalten-Layouts für den "Freifelder"-Tab bei Artikeln
-- Interne-Notiz-Felder (`wc_interne_notiz`) und Versand-Tracking-Felder (`wc_tracking_nummer`, `wc_versanddienstleister`)
+- Interne-Notiz-Felder (`wc_interne_notiz`, für Belegarten ohne eigenes natives ERPNext-Feld dafür – Kunden/Lieferanten haben mit `customer_details`/`supplier_details` bereits ein natives Pendant, siehe unten) und Versand-Tracking-Felder (`wc_tracking_nummer`, `wc_versanddienstleister`)
 - Belegketten-Verknüpfungsfelder (Angebot → Auftrag → Rechnung, Bestellung → Eingangsrechnung, Lieferung → Auftrag)
 - Artikelgruppen und Hersteller aus den WeClapp-Artikeldaten
 - Der vollständige WeClapp-Lagerbaum (Lager/Lagerort/Lagerplatz) als ERPNext-Warehouses
 - WeClapps echte Bank-/Darlehens-/Kreditkarten-/Kassenkonten (`bankAccount`/`cashAccount`) als einzelne ERPNext-Konten, plus ein Forderungsverlust-Konto für Zahlungen ohne echte Bankbewegung dahinter (siehe Zahlungseingänge/-ausgänge unten)
 - Individuelle Personenkonten (ein eigenes Debitoren-/Kreditorenkonto pro Kunde/Lieferant, statt eines gemeinsamen Sammelkontos für alle) – aus WeClapps `party.customerDebtorAccountNumber`/`supplierCreditorAccountNumber` abgeleitet, direkt über die WeClapp-ID zugeordnet (keine Namenszuordnung nötig)
 - "Negative Beträge zulassen" wird auf Verkaufs- und Einkaufsseite automatisch aktiviert (nötig für Gutschriften/Rabattzeilen, die WeClapp mit negativem Betrag abbildet)
+- Geschäftsjahre werden automatisch für jedes in den WeClapp-Daten tatsächlich vorkommende Kalenderjahr angelegt (aus den Datumsfeldern über alle Belegarten ermittelt), damit historische Belege nicht an einem fehlenden Fiscal Year scheitern
+- Die Mengeneinheit "Nos" wird von "muss eine Ganzzahl sein" auf gebrochene Mengen umgestellt (WeClapp führt teils echte Bruchstückzahlen)
 - Namensschema (WeClapps eigene Belegnummern werden als ERPNext-Namen übernommen statt ERPNexts automatischer Nummernkreise)
 
 ### Migrationen nach ERPNext
@@ -45,11 +47,19 @@ Idempotentes, einmaliges Anlegen der ERPNext-Stammdaten, die vor der eigentliche
 Bisher implementiert sind die folgenden Objekte (siehe `main.py`):
 
 **Stammdaten**
-- Kunden (inkl. Bankkonten, individuellem Personenkonto, Adressen, Kontakte, Zusatzfelder). Hat
-  WeClapp eine abweichende Rechnungs-E-Mail-Adresse hinterlegt, wird dafür ein eigener ERPNext-Kontakt
-  angelegt und als primärer Kontakt gesetzt – nur so übernimmt ihn ERPNext beim Anlegen künftiger
-  Rechnungen automatisch als Empfänger (ein reines Datenfeld würde ERPNext dafür nicht heranziehen)
-- Lieferanten (inkl. Bankkonten, individuellem Personenkonto, abweichender Rechnungs-E-Mail wie oben)
+- Kunden (inkl. Bankkonten, individuellem Personenkonto, Adressen, Kontakte, Zusatzfelder,
+  internen WeClapp-Kommentaren – siehe unten). Hat WeClapp eine abweichende
+  Rechnungs-E-Mail-Adresse hinterlegt, wird dafür ein eigener ERPNext-Kontakt angelegt und als
+  primärer Kontakt gesetzt – nur so übernimmt ihn ERPNext beim Anlegen künftiger Rechnungen
+  automatisch als Empfänger (ein reines Datenfeld würde ERPNext dafür nicht heranziehen)
+- Lieferanten (inkl. Bankkonten, individuellem Personenkonto, internen WeClapp-Kommentaren,
+  abweichender Rechnungs-E-Mail wie oben)
+  - WeClapps verknüpfte Kommentare ("Kommentare"-Feature auf Kunden/Lieferanten, getrennt von der
+    "Beschreibung") werden zusammen mit der Beschreibung in ERPNexts eigenes natives Feld dafür
+    geschrieben (`customer_details`/`supplier_details` – "Internal notes about this
+    customer/supplier", kein Custom Field nötig). Der WeClapp-Endpunkt dafür hat keinen Bulk-Modus
+    (ein Request pro Kunde/Lieferant nötig), daher bewusst nur auf Kunden/Lieferanten begrenzt,
+    nicht auf Belege wie Aufträge/Rechnungen ausgeweitet
 - Kontakte, Adressen
 - Artikel (inkl. Zusatzfelder, Preise, Artikelgruppen, Hersteller)
 - CRM-Ereignisse (ein-/ausgehende Anrufe) als ERPNext Communications, verknüpft mit dem jeweiligen
@@ -62,29 +72,57 @@ Bisher implementiert sind die folgenden Objekte (siehe `main.py`):
 - Bestellungen
 - Eingangsrechnungen
 - Lagerbewegungen als Stock Entries – vollständige historische Nachbildung, die einzige Quelle für den ERPNext-Lagerbestand
-- Lieferungen als Delivery Notes – reine Liefer-/Tracking-Belege (`update_stock=0`), da die Lagerbewegungs-Nachbildung dieselben Warenausgänge bereits abdeckt
+- Lieferungen als Delivery Notes – reine Liefer-/Tracking-Belege, bewusst als Entwurf (nicht eingereicht) angelegt, da ein eingereichter Delivery Note in ERPNext immer auf den Lagerbestand bucht (es gibt dafür keinen Opt-out) und die Lagerbewegungs-Nachbildung dieselben Warenausgänge bereits abdeckt – ein eingereichter Delivery Note würde den Bestand doppelt abziehen
 - Zahlungen (offene Posten) als Payment Entries, aufgelöst über WeClapps echtes Buchungsjournal (`accountingTransaction`, zugeordnet über Rechnungsnummer + beglichenen Betrag) für das korrekte Bank-/Kassenkonto und das echte Zahlungsdatum – nicht die alte Notlösung "vollständig bezahlt am Rechnungsdatum, gegen ein pauschales Konto". Zahlungen ohne echte Bankbewegung dahinter (WeClapp-Abschreibungen/Zahlungsdifferenzen, die als "bezahlt" markiert wurden, ohne dass Geld geflossen ist) werden stattdessen als Journal-Entry-Abschreibung gebucht statt als fingierte Zahlung – siehe das Modul-Docstring in `migration/payment_entry_migration.py` für die vollständige Herleitung und empirische Trefferquoten (~81 % Verkauf / ~71 % Einkauf lösen sich auf ein echtes Konto auf, der Rest sind Abschreibungen)
 
 **Übergreifend**
 - Gesperrte/insolvente Kunden, bestellgesperrte Lieferanten und inaktive Artikel aus WeClapp werden in ERPNext erst deaktiviert, nachdem alle historischen Belege, die auf sie verweisen, importiert wurden
 - Der historische Lagerbaum wird wieder deaktiviert, sobald die Lagerbewegungs-/Lieferschein-Nachbildung dagegen gebucht wurde (bleibt für die Historie erhalten, wird aber für neue Belege ausgeblendet)
 
-### Nächste Schritte
+### Altrechnungs-Import (`legacy_invoices/`)
 
-- Nummernkreise für den laufenden Betrieb nach Go-Live (Belege benötigen aktuell einen manuell eingegebenen Namen, da WeClapps eigene Nummern während der Migration übernommen werden)
-- Verträge, SEPA-Mandate, Tickets
-- WeClapps vollständiges Buchungsjournal (`accountingTransaction`) wird bewusst **nicht** als allgemeine Journal Entries importiert – ERPNext erzeugt beim Buchen von Verkaufs-/Einkaufsrechnungen bereits eigene GL-Einträge, ein vollständiger Journal-Import würde alles doppelt buchen. Nur die oben beschriebenen gezielten Abschreibungsbuchungen (Zahlungen/offene Posten) nutzen das Journal, und auch dort nur zur Auflösung/Verifikation einzelner Zahlungen
+Separat von der regulären WeClapp-Pipeline: Rechnungen, die nur noch als PDF existieren und nie
+strukturiert in WeClapp erfasst wurden, werden über `legacy_invoices/import_legacy_invoices.py`
+importiert. Eine externe Vorverarbeitung extrahiert die PDFs nach `legacy_invoices/invoices.json`
+(Schema siehe `legacy_invoices/FORMAT.md`); das Skript legt daraus Sales Invoices als **Entwurf**
+an (bewusst nicht eingereicht – erst nach Stichprobenprüfung gegen die Original-PDFs manuell
+freigeben), inklusive PDF-Anhang, unter einem eigenen Namensraum (`RE-ALT-...`), getrennt von den
+regulären `RE-...`-Belegen.
+
+### Bewusst nicht umgesetzt
+
+Vom Nutzer nach Abschluss der Migration explizit entschieden, nicht offene Baustellen:
+
+- **Nummernkreise für den laufenden Betrieb nach Go-Live** – bleibt dauerhaft bei WeClapps eigenen
+  Belegnummern als manuell eingegebenem ERPNext-Namen; für diese konkrete Instanz bewusst als
+  verzichtbar eingestuft
+- **Verträge, Tickets** – nicht migriert, da die entsprechenden WeClapp-Module für diese Instanz
+  nie abonniert waren (keine Daten vorhanden)
+- **SEPA-Lastschriftmandate** – technisch machbar geprüft (WeClapp hat nur eine Handvoll Mandate
+  gecacht, ERPNext hat kein natives SEPA-Doctype, Custom Fields auf Bank Account wären der
+  pragmatische Weg gewesen), aber als "nice to have, kein Muss" nicht umgesetzt
+- WeClapps vollständiges Buchungsjournal (`accountingTransaction`) wird bewusst **nicht** als
+  allgemeine Journal Entries importiert – ERPNext erzeugt beim Buchen von Verkaufs-/
+  Einkaufsrechnungen bereits eigene GL-Einträge, ein vollständiger Journal-Import würde alles
+  doppelt buchen. Nur die oben beschriebenen gezielten Abschreibungsbuchungen (Zahlungen/offene
+  Posten) nutzen das Journal, und auch dort nur zur Auflösung/Verifikation einzelner Zahlungen
+
+### Verbleibender manueller Schritt
+
+- `disable_legacy_warehouses()` (in `main.py`) deaktiviert den historischen Lagerbaum – sinnvoll
+  erst auszuführen, wenn die Migration final für abgeschlossen erklärt wird, daher bewusst kein
+  automatischer Teil von `main.py`s Standardlauf
 
 ## Für die eigene WeClapp-/ERPNext-Instanz anpassen
 
 Dieses Projekt wurde gegen eine konkrete WeClapp- und ERPNext-Instanz entwickelt und eingestellt. Über die üblichen API-Zugangsdaten hinaus sind mehrere Dinge fest auf diese Instanz zugeschnitten und müssten für eine andere Umgebung neu geprüft bzw. neu aufgebaut werden:
 
-- **`config.py` – jede `EN_*_ACCOUNT`-/`EN_*_ACCOUNT_TYPE`-/`EN_DEFAULT_COST_CENTER`-/`EN_DEFAULT_TAXES_AND_CHARGES`-/`EN_DEFAULT_WAREHOUSE`-/`EN_ITEM_TAX_TEMPLATE_MAP`-/`EN_COMPANY`-/`EN_COMPANY_ABBR`-Konstante.** Das sind wörtliche Konto-/Kostenstellen-/Vorlagen-Namen, live gegen den echten ERPNext-Kontenplan dieser Instanz geprüft (SKR03-Vorlage mit deren exakter Bezeichnung). Werden sie unverändert in eine andere ERPNext-Instanz übernommen, referenzieren sie dort still Konten, die nicht existieren. Jede einzeln live prüfen (z. B. über die ERPNext-REST-API, `GET /api/resource/Account/<name>`), bevor irgendetwas ernsthaft läuft.
+- **`config.py` – jede `EN_*_ACCOUNT`-/`EN_*_ACCOUNT_TYPE`-/`EN_DEFAULT_COST_CENTER`-/`EN_DEFAULT_TAXES_AND_CHARGES`-/`EN_DEFAULT_WAREHOUSE`-/`EN_COMPANY`-/`EN_COMPANY_ABBR`-Konstante.** Das sind wörtliche Konto-/Kostenstellen-/Vorlagen-Namen, live gegen den echten ERPNext-Kontenplan dieser Instanz geprüft (SKR03-Vorlage mit deren exakter Bezeichnung). Werden sie unverändert in eine andere ERPNext-Instanz übernommen, referenzieren sie dort still Konten, die nicht existieren. Jede einzeln live prüfen (z. B. über die ERPNext-REST-API, `GET /api/resource/Account/<name>`), bevor irgendetwas ernsthaft läuft.
 - **`config.EN_CUSTOM_ATTRIBUTE_EXCLUDE` / `EN_MULTISELECT_TABLE_FIELDS`.** Fest codierte WeClapp-`attributeKey`-IDs, spezifisch für die eigenen Zusatzfelder dieser Instanz (Shop-Integrations-Synchronisationsfelder, Multi-Select-Dropdowns) – eine andere WeClapp-Instanz hat andere Zusatzfelder mit anderen Keys, das muss anhand der eigenen `customAttributeDefinition.json` neu aufgebaut werden.
 - **`setup.ITEM_FREIFELDER_LAYOUT`.** Das Tab-/Sektions-/Spalten-Layout des Artikel-"Freifelder"-Tabs wurde von Hand für ~44 konkrete Artikel-Zusatzfelder dieser Instanz modelliert (siehe Code-Kommentar dort) – es greift bei einer anderen WeClapp-Instanz für deren Zusatzfelder überhaupt nicht (die würden einfach mit `FAILED ... no WeClapp definition found` übersprungen). Entweder das Layout für die neuen Felder neu bauen, oder auf die generische, flache Sektion zurückfallen, die jeder andere Doctype ohnehin bekommt (siehe `setup_custom_fields()`).
 - **Payment-Entry-Kontoauflösung (`payment_entry_migration.py`).** Der Abgleich über Rechnungsnummer + Betrag gegen WeClapps Buchungsjournal wurde empirisch gegen die Daten dieser Instanz validiert (~81 % Verkauf / ~71 % Einkauf Trefferquote) – diese Validierung vor dem produktiven Einsatz gegen die eigenen `salesOpenItem`/`purchaseOpenItem`/`accountingTransaction`-Daten wiederholen. Die Trefferquote hängt stark davon ab, wie konsistent die eigene WeClapp-Bankanbindung `externalRecordNumber` befüllt, was zwischen Instanzen deutlich variieren kann.
 - **`setup.setup_bank_accounts()`** selbst ist datengetrieben (leitet alles aus `bankAccount.json`/`cashAccount.json`/`ledgerAccount.json` ab, keine fest codierte Kontenliste) und sollte für eine andere SKR03-basierte WeClapp-Instanz unverändert funktionieren – nur die beiden Konten-Übergruppen `EN_BANK_ACCOUNT_GROUP`/`EN_LOAN_ACCOUNT_GROUP` sowie `EN_RECEIVABLE_WRITEOFF_ACCOUNT_GROUP` in `config.py` müssen zur tatsächlichen Kontenplan-Struktur der Ziel-ERPNext-Instanz passen.
-- **`config.EN_DEBTOR_ACCOUNT_GROUP` / `EN_CREDITOR_ACCOUNT_GROUP`** (Übergruppen für die individuellen Personenkonten, siehe `setup.setup_personal_accounts()`) sind – anders als alle anderen Kontennamen in `config.py` – **nicht live verifiziert**, da der ERPNext-API-Zugang beim Bau dieser Funktion gerade inaktiv war. Aktuell nur eine plausible SKR03-Konvention-Schätzung ("...mit Kontokorrent" als Pendant zu den bereits verifizierten Sammelkonten). Unbedingt vor dem produktiven Lauf gegen den echten Kontenplan prüfen.
+- **`config.EN_DEBTOR_ACCOUNT_GROUP` / `EN_CREDITOR_ACCOUNT_GROUP`** (Übergruppen für die individuellen Personenkonten, siehe `setup.setup_personal_accounts()`) wurden für die ursprüngliche Instanz live gegen den echten Kontenplan verifiziert (SKR03-Konvention "...mit Kontokorrent" als Pendant zu den Sammelkonten – bestätigt korrekt). Bei einer anderen Instanz trotzdem vor dem produktiven Lauf gegenprüfen, da das eine reine Namenskonvention und keine strukturelle Notwendigkeit ist.
 
 ## Installation
 

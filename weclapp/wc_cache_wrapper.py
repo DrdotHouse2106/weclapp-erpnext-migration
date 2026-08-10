@@ -34,7 +34,17 @@ class WcCacheWrapper:
         WeClappDocType.QUOTATION,
         WeClappDocType.SHIPMENT,
     ]
-    
+
+    """list[WeClappDocType]: Doctypes whose linked WeClapp comments ("Kommentare") get cached -
+    see _cache_comments(). Scope limited to Customer/Supplier (not e.g. every transactional
+    document) per explicit user decision (2026-08-10) - the comment endpoint has no bulk mode, so
+    it's one extra HTTP round-trip per entity, and widening this list multiplies the cache run's
+    duration accordingly."""
+    comment_doctypes = [
+        WeClappDocType.CUSTOMER,
+        WeClappDocType.SUPPLIER,
+    ]
+
     def __init__(self, wc_api: WeClappAPI = None, wc_cache_api: WcCacheApi = None):
         """Initializes the cache wrapper.
 
@@ -112,6 +122,25 @@ class WcCacheWrapper:
                 # Cache email
                 self.wc_cache_api.create("archivedEmail", email)
 
+    def _cache_comments(self, party_ids: set) -> None:
+        """Caches all linked comments ("Kommentare") for the given party IDs.
+
+        Customer and Supplier are both backed by the same underlying WeClapp "party" entity
+        (ids match 1:1 across customer.json/supplier.json/party.json - see
+        WcCacheApi.get_parties()), confirmed live that querying entityName="party" returns the
+        exact same result as entityName="customer"/"supplier" for a given id. ~43 parties in this
+        instance are both a customer and a supplier - querying separately per doctype (like
+        _cache_archived_emails() does) would fetch and store their comments twice. This instead
+        takes the pre-deduplicated union of both ID sets (see cache_all()) and queries
+        entityName="party" once per unique id.
+
+        Args:
+            party_ids (set): Deduplicated set of party IDs to get the comments from
+        """
+        for id in party_ids:
+            for comment in self.wc_api.get_comments("party", id):
+                self.wc_cache_api.create("comment", comment)
+
     def cache_all(self):
         """Caches all WeClapp DocTypes to local database.
         """
@@ -120,6 +149,7 @@ class WcCacheWrapper:
             file.unlink()
 
         # Cache all DocTypes
+        comment_party_ids = set()
         for doctype in WeClappDocType:
             try:
                 # Get all entities
@@ -138,6 +168,11 @@ class WcCacheWrapper:
                 if doctype in self.mail_doctypes:
                     self._cache_archived_emails(doctype, ids)
 
+                # Collect ids for comment caching (deduplicated across doctypes, done once after
+                # the main loop - see _cache_comments())
+                if doctype in self.comment_doctypes:
+                    comment_party_ids.update(ids)
+
                 print(f"Cached {doctype}")
 
             except Exception as e:
@@ -145,3 +180,7 @@ class WcCacheWrapper:
                 # e is always an ApiException (a non-API error here must not crash the loop itself
                 # and abort caching every doctype after it)
                 print(f"Could not cache {doctype}: {type(e).__name__}: {getattr(e, 'response_text', None) or e}")
+
+        if comment_party_ids:
+            self._cache_comments(comment_party_ids)
+            print(f"Cached comments for {len(comment_party_ids)} parties")

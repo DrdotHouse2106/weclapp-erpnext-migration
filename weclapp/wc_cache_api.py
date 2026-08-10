@@ -163,6 +163,29 @@ class WcCacheApi(ApiBase):
             self._parties = {v["id"]: v for v in raw.values()}
         return self._parties
 
+    def get_comments(self) -> dict:
+        """Returns all cached WeClapp linked comments ("Kommentare" - see
+        WcCacheWrapper._cache_comments()), grouped by entityId (WeClapp party id) as a list,
+        since a single customer/supplier can have several. Comments are attached to the
+        underlying "party" entity and shared between customer/supplier records with the same id.
+
+        Returns:
+            dict: entityId -> list of comment dicts. Empty dict if comment.json doesn't exist
+                yet (older cache runs predate this - see cache_weclapp.py).
+        """
+        if getattr(self, "_comments", None) is None:
+            db_path = Path(self.base_url).joinpath("comment.json")
+            if not db_path.exists():
+                self._comments = {}
+            else:
+                with open(db_path, "r") as f:
+                    raw = json.load(f)["data"]
+                grouped = {}
+                for v in raw.values():
+                    grouped.setdefault(v["entityId"], []).append(v)
+                self._comments = grouped
+        return self._comments
+
     def get_bank_accounts(self) -> dict:
         """Returns all real WeClapp bank/loan/credit-card accounts, keyed by WeClapp "id".
         Each entry's "accountId" links to a ledger account (see get_ledger_accounts()).
