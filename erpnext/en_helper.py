@@ -163,6 +163,39 @@ class ERPNextHelper:
         return f"{account_number} - {ERPNextHelper.get_wc_account_label(account_number, description)}"
 
     @staticmethod
+    def strip_html(html: str) -> str:
+        """Converts WeClapp's rich-text HTML (as found in e.g. customer/supplier "description")
+        into plain text, for target fields that render as-is instead of interpreting HTML (e.g.
+        ERPNext's native Customer.customer_details/Supplier.supplier_details, both plain "Text"
+        fieldtype, not "Text Editor" - raw tags would otherwise show up literally).
+
+        Args:
+            html (str): WeClapp rich-text HTML
+
+        Returns:
+            str: Plain text, or an empty string if html is falsy
+        """
+        if not html:
+            return str()
+        import html as html_module
+        # WeClapp's "description" field is observed double-HTML-encoded in practice (confirmed
+        # live: raw cache values contain literal strings like "&amp;Uuml;" and "&lt;br /&gt;" -
+        # real markup/entities hidden behind an extra layer of escaping). Unescape repeatedly
+        # until stable (bounded, to avoid looping forever on adversarial input) BEFORE handling
+        # tags, so real "<br />"/"Ü" etc. are exposed first rather than left as literal text.
+        text = html
+        for _ in range(5):
+            unescaped = html_module.unescape(text)
+            if unescaped == text:
+                break
+            text = unescaped
+        text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+        text = re.sub(r"(?i)</p>", "\n", text)
+        text = re.sub(r"<[^>]+>", "", text)
+        # Collapse runs of blank lines left behind by stripped block tags
+        return re.sub(r"\n{2,}", "\n", text).strip()
+
+    @staticmethod
     def get_date_from_weclapp_ts(timestamp: int) -> str:
         """Returns a date string from a WeClapp timestamp.
 

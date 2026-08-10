@@ -42,6 +42,7 @@ class MigrationWrapper:
         self.wc_ledger_accounts = self.wc_api.get_ledger_accounts()
         self.wc_accounting_tx_index = self.wc_api.get_accounting_transaction_payment_index()
         self.wc_parties = self.wc_api.get_parties()
+        self.wc_comments = self.wc_api.get_comments()
 
 
     def __enter__(self):
@@ -92,10 +93,10 @@ class MigrationWrapper:
         match self.en_doctype:
             case ERPNextDocType.CUSTOMER:
                 return CustomerMigration(self.en_api, wc_obj, self.wc_custom_attribute_definitions,
-                                          self.wc_parties)
+                                          self.wc_parties, self.wc_comments)
             case ERPNextDocType.SUPPLIER:
                 return SupplierMigration(self.en_api, wc_obj, self.wc_custom_attribute_definitions,
-                                          self.wc_parties)
+                                          self.wc_parties, self.wc_comments)
             case ERPNextDocType.ADDRESS:
                 return AddressMigration(self.en_api, wc_obj, self.wc_custom_attribute_definitions)
             case ERPNextDocType.SALES_INVOICE:

@@ -433,11 +433,15 @@ def setup_shipment_tracking_fields(en_api: ERPNextAPI):
 
 def setup_internal_note_fields(en_api: ERPNextAPI):
     """Creates the "wc_interne_notiz" Custom Field (WeClapp's internal free-text/note fields -
-    recordFreeText/recordOpening/note on transactional documents, "description" on
-    Customer/Supplier - see BaseMigration._map_wc_notes()) on every doctype that carries them.
+    recordFreeText/recordOpening/note - see BaseMigration._map_wc_notes()) on every transactional
+    doctype that carries them. Customer/Supplier deliberately excluded: they have their own
+    native ERPNext fields for exactly this purpose (Customer.customer_details/
+    Supplier.supplier_details - "Internal notes about this customer/supplier", plain Text, not
+    Text Editor) - see CustomerMigration/SupplierMigration._map_notes_and_comments(), which write
+    "description" + WeClapp's linked comments there directly instead of into a custom field.
     """
     doctypes = ["Sales Order", "Sales Invoice", "Purchase Order", "Purchase Invoice",
-                "Quotation", "Delivery Note", "Customer", "Supplier"]
+                "Quotation", "Delivery Note"]
     created, skipped, failed = 0, 0, 0
 
     def _create(payload, what):

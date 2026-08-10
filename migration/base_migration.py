@@ -113,6 +113,37 @@ class BaseMigration(ABC):
         values = [self.wc_data.get(f) for f in fields]
         return "\n".join(v for v in values if v)
 
+    def _map_wc_comments(self, comments: list) -> str:
+        """Formats WeClapp's linked comments ("Kommentare") as plain-text lines, each prefixed
+        with its date and author. This is WeClapp's general-purpose internal-note feature -
+        attached to an entity via a separate API endpoint (entityName/entityId, no bulk listing),
+        entirely distinct from description/recordFreeText/note (_map_wc_notes()). Customer and
+        Supplier share the same underlying WeClapp "party" id, so a single comment can show up
+        for both - see WcCacheApi.get_comments()/WcCacheWrapper._cache_comments().
+
+        Plain text, not HTML: the target fields (ERPNext's native Customer.customer_details/
+        Supplier.supplier_details) are plain "Text" fieldtype, which renders content as-is rather
+        than interpreting it - HTML markup would show up as literal tags. WeClapp's own
+        "comment" field is itself already plain text in practice (confirmed live: "htmlComment"
+        is null on every cached comment), strip_html() here is just defensive.
+
+        Args:
+            comments (list): List of WeClapp comment dicts (id, comment, authorUserUsername,
+                createdDate, ...), typically looked up by party id from WcCacheApi.get_comments()
+
+        Returns:
+            str: Joined plain-text lines, or an empty string if there are none
+        """
+        parts = []
+        for c in sorted(comments, key=lambda c: c.get("createdDate") or 0):
+            text = ERPNextHelper.strip_html(c.get("comment"))
+            if not text:
+                continue
+            date = ERPNextHelper.get_date_from_weclapp_ts(c["createdDate"]) if c.get("createdDate") else "?"
+            author = c.get("authorUserUsername") or "?"
+            parts.append(f"{date} ({author}): {text}")
+        return "\n".join(parts)
+
     def _map_net_rate(self, item: dict) -> float:
         """Computes the true net unit rate of a WeClapp line item from its authoritative netAmount.
         WeClapp's "unitPrice" is the gross (tax-inclusive), pre-discount list price - feeding it

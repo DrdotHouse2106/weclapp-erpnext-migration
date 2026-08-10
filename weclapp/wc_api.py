@@ -248,3 +248,22 @@ class WeClappAPI(ApiBase):
         return self._request(self._get_url('archivedEmail'), "GET",
                              params={"entityName": doctype.value,
                                      "entityId": id, "serializeNulls": True}).json()["result"]
+
+    def get_comments(self, entity_name: str, id: str) -> list[dict]:
+        """Gets all linked comments ("Kommentare" - WeClapp's general-purpose internal-note
+        feature, attached to an entity, separate from description/recordFreeText/note) for a
+        given entity name and ID. No bulk/list-all mode - confirmed live, the endpoint 400s with
+        "missing parameter: entityName"/"missing parameter: entityId" if either is omitted, so
+        this has to be called once per entity.
+
+        Args:
+            entity_name (str): WeClapp entity name to get the comments for (e.g. "party" -
+                Customer/Supplier comments are both attached to the underlying party entity)
+            id (str): ID of the entity to get the comments from
+
+        Returns:
+            list[dict]: List of comments
+        """
+        return self._request(self._get_url('comment'), "GET",
+                             params={"entityName": entity_name,
+                                     "entityId": id, "serializeNulls": True}).json()["result"]
