@@ -40,6 +40,7 @@ Idempotentes, einmaliges Anlegen der ERPNext-Stammdaten, die vor der eigentliche
 - "Negative Beträge zulassen" wird auf Verkaufs- und Einkaufsseite automatisch aktiviert (nötig für Gutschriften/Rabattzeilen, die WeClapp mit negativem Betrag abbildet)
 - Geschäftsjahre werden automatisch für jedes in den WeClapp-Daten tatsächlich vorkommende Kalenderjahr angelegt (aus den Datumsfeldern über alle Belegarten ermittelt), damit historische Belege nicht an einem fehlenden Fiscal Year scheitern
 - Die Mengeneinheit "Nos" wird von "muss eine Ganzzahl sein" auf gebrochene Mengen umgestellt (WeClapp führt teils echte Bruchstückzahlen)
+- Payment Terms Templates werden aus WeClapps Zahlungsbedingungen-Kurzform (z. B. "net 14", "3/14 net 90") automatisch abgeleitet und angelegt (inkl. Skonto-Bedingungen bei der X/Y-net-Z-Schreibweise)
 - Namensschema (WeClapps eigene Belegnummern werden als ERPNext-Namen übernommen statt ERPNexts automatischer Nummernkreise)
 
 ### Migrationen nach ERPNext
@@ -51,9 +52,20 @@ Bisher implementiert sind die folgenden Objekte (siehe `main.py`):
   internen WeClapp-Kommentaren – siehe unten). Hat WeClapp eine abweichende
   Rechnungs-E-Mail-Adresse hinterlegt, wird dafür ein eigener ERPNext-Kontakt angelegt und als
   primärer Kontakt gesetzt – nur so übernimmt ihn ERPNext beim Anlegen künftiger Rechnungen
-  automatisch als Empfänger (ein reines Datenfeld würde ERPNext dafür nicht heranziehen)
+  automatisch als Empfänger (ein reines Datenfeld würde ERPNext dafür nicht heranziehen). Hat
+  WeClapp weder einen echten Ansprechpartner noch eine abweichende Rechnungs-E-Mail hinterlegt
+  (der Regelfall bei Privatkunden), wird ersatzweise ein Kontakt aus den Stammdaten des Kunden
+  selbst angelegt (Name, E-Mail, Telefon/Mobil, Anrede, Titel, Fax) – ohne diesen Fallback
+  erreichen ERPNexts eigene `email_id`/`mobile_no`-Felder auf Customer/Supplier (beides reine
+  Fetch-Felder vom primären Kontakt) sonst nie einen Wert
 - Lieferanten (inkl. Bankkonten, individuellem Personenkonto, internen WeClapp-Kommentaren,
-  abweichender Rechnungs-E-Mail wie oben)
+  abweichender Rechnungs-E-Mail und Fallback-Kontakt wie oben)
+- Zahlungsbedingungen (`payment_terms`, siehe Payment Terms Templates oben) und Zahlungsart
+  (Custom Field `wc_zahlungsart`, z. B. "Auf Rechnung", "PayPal" – kein natives ERPNext-Feld dafür)
+  für Kunden und Lieferanten
+- WeClapps vier Marketing-Einwilligungs-Flags (E-Mail/Brief/Telefon/SMS) als Custom Fields
+  `wc_opt_in_email`/`_letter`/`_phone`/`_sms` auf Customer (nur Kundenseite – WeClapp trackt das
+  für Lieferanten nicht)
   - WeClapps verknüpfte Kommentare ("Kommentare"-Feature auf Kunden/Lieferanten, getrennt von der
     "Beschreibung") werden zusammen mit der Beschreibung in ERPNexts eigenes natives Feld dafür
     geschrieben (`customer_details`/`supplier_details` – "Internal notes about this

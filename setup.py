@@ -3,6 +3,7 @@ migration: custom fields (Zusatzfelder), item groups (Artikelgruppen), warehouse
 manufacturers. Safe to re-run - existing records are skipped, not duplicated.
 """
 import json
+import re
 from pathlib import Path
 import config
 import weclapp as wc
@@ -476,6 +477,86 @@ def setup_internal_note_fields(en_api: ERPNextAPI):
     print(f"--- Internal Note Fields: {created} created, {skipped} skipped (exists), {failed} failed ---")
 
 
+def setup_customer_supplier_extra_fields(en_api: ERPNextAPI):
+    """Creates additional Customer/Supplier/Contact Custom Fields for WeClapp data that has no
+    native ERPNext equivalent:
+    - Contact.wc_fax - WeClapp "fax", ERPNext's Contact doctype has no fax field at all.
+    - Customer/Supplier.wc_zahlungsart - WeClapp "paymentMethodName" (e.g. "Auf Rechnung",
+      "PayPal", "Lastschrift") - distinct from payment_terms (due-date terms, see
+      setup_payment_terms()); ERPNext has no native "preferred payment method" master-data field.
+    - Customer/Supplier.wc_opt_in_email/wc_opt_in_letter/wc_opt_in_phone/wc_opt_in_sms - WeClapp's
+      four separate marketing-consent flags (optIn/optInLetter/optInPhone/optInSms). Deliberately
+      kept as their own explicit fields (not merged into ERPNext's native Contact.unsubscribed,
+      which only covers email and is a single generic flag) - the Shopware/ecommerce_integrations
+      side needs to read these directly per channel, see ~/shared-agent-test.md.
+    """
+    created, skipped, failed = 0, 0, 0
+
+    def _create(payload, what):
+        nonlocal created, skipped, failed
+        try:
+            en_api.create(ERPNextDocType.CUSTOM_FIELD, payload)
+            created += 1
+        except Exception as e:
+            if "already exists" in str(e) or "DuplicateEntryError" in str(e):
+                skipped += 1
+            else:
+                print(f"FAILED {what}: {type(e).__name__}: {e}")
+                failed += 1
+
+    _create({
+        "dt": "Contact",
+        "fieldname": "wc_fax",
+        "label": "Fax (WeClapp)",
+        "fieldtype": "Data",
+        "insert_after": "phone_nos",
+    }, "Custom Field Contact.wc_fax")
+
+    for doctype in ["Customer", "Supplier"]:
+        _create({
+            "dt": doctype,
+            "fieldname": "wc_zahlungsart",
+            "label": "Zahlungsart (WeClapp)",
+            "fieldtype": "Data",
+        }, f"Custom Field {doctype}.wc_zahlungsart")
+        _create({
+            "dt": doctype,
+            "fieldname": "wc_opt_in_sektion",
+            "label": "Marketing-Einwilligungen (WeClapp)",
+            "fieldtype": "Section Break",
+            "collapsible": 1,
+        }, f"Section Break {doctype}.wc_opt_in_sektion")
+        _create({
+            "dt": doctype,
+            "fieldname": "wc_opt_in_email",
+            "label": "Opt-In E-Mail",
+            "fieldtype": "Check",
+        }, f"Custom Field {doctype}.wc_opt_in_email")
+        _create({
+            "dt": doctype,
+            "fieldname": "wc_opt_in_letter",
+            "label": "Opt-In Brief",
+            "fieldtype": "Check",
+            "insert_after": "wc_opt_in_email",
+        }, f"Custom Field {doctype}.wc_opt_in_letter")
+        _create({
+            "dt": doctype,
+            "fieldname": "wc_opt_in_phone",
+            "label": "Opt-In Telefon",
+            "fieldtype": "Check",
+            "insert_after": "wc_opt_in_letter",
+        }, f"Custom Field {doctype}.wc_opt_in_phone")
+        _create({
+            "dt": doctype,
+            "fieldname": "wc_opt_in_sms",
+            "label": "Opt-In SMS",
+            "fieldtype": "Check",
+            "insert_after": "wc_opt_in_phone",
+        }, f"Custom Field {doctype}.wc_opt_in_sms")
+
+    print(f"--- Customer/Supplier Extra Fields: {created} created, {skipped} skipped (exists), {failed} failed ---")
+
+
 def setup_personal_accounts(en_api: ERPNextAPI):
     """Creates one ERPNext Account per WeClapp customer/supplier individual sub-ledger account
     (Personenkonto) - party.customerDebtorAccountNumber / supplierCreditorAccountNumber, set by
@@ -540,6 +621,81 @@ def setup_personal_accounts(en_api: ERPNextAPI):
                              currency, f"Kreditor {_label(v)}")
 
     print(f"--- Personal Accounts (Personenkonten): {created} created, {skipped} skipped (exists), {failed} failed ---")
+
+
+def _parse_wc_payment_term(name: str) -> dict:
+    """Parses WeClapp's payment-term shorthand into a single Payment Terms Template Detail row.
+    Verified against every distinct termOfPaymentName actually present in customer.json/
+    supplier.json before writing this (project convention: verify against real data) - all of
+    "net 7"/"net 14"/"net 30"/"net sofort" (plain due date) and "3/14 net 90"/"2/14, net 30"-style
+    (X% discount if paid within Y days, full amount net due in Z days) values parse cleanly.
+
+    Args:
+        name (str): WeClapp termOfPaymentName, e.g. "net 14" or "2/14, net 30"
+
+    Returns:
+        dict: A single Payment Terms Template Detail row. Falls back to a plain "due immediately"
+            row (credit_days=0) with the raw name in "description" if the format is unrecognized,
+            so the template still gets created and the Link field on Customer/Supplier still
+            resolves - rather than silently skipping.
+    """
+    stripped = name.strip()
+    m = re.match(r"^(\d+)/(\d+),?\s*net\s+(\d+)$", stripped, re.IGNORECASE)
+    if m:
+        discount, validity, credit_days = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return {
+            "invoice_portion": 100,
+            "due_date_based_on": "Day(s) after invoice date",
+            "credit_days": credit_days,
+            "discount_type": "Percentage",
+            "discount": discount,
+            "discount_validity_based_on": "Day(s) after invoice date",
+            "discount_validity": validity,
+            "description": stripped,
+        }
+    if re.match(r"^net\s+sofort$", stripped, re.IGNORECASE):
+        return {"invoice_portion": 100, "due_date_based_on": "Day(s) after invoice date",
+                "credit_days": 0, "description": stripped}
+    m = re.match(r"^net\s+(\d+)$", stripped, re.IGNORECASE)
+    if m:
+        return {"invoice_portion": 100, "due_date_based_on": "Day(s) after invoice date",
+                "credit_days": int(m.group(1)), "description": stripped}
+    return {"invoice_portion": 100, "due_date_based_on": "Day(s) after invoice date",
+            "credit_days": 0, "description": stripped}
+
+
+def setup_payment_terms(en_api: ERPNextAPI):
+    """Creates one ERPNext Payment Terms Template per distinct WeClapp termOfPaymentName value
+    (scanned from customer.json/supplier.json), so CustomerMigration/SupplierMigration can set
+    Customer/Supplier.payment_terms as a plain Link to it by name (Payment Terms Template's
+    autoname is "field:template_name", so the WeClapp string itself becomes the document name -
+    no separate mapping needed). See _parse_wc_payment_term() for the shorthand parsing.
+    """
+    wc_api = wc.WcCacheApi(config.WC_CACHE_BASE)
+    wc_api.open()
+    names = set()
+    for doctype in ("customer", "supplier"):
+        for v in wc_api.get_all(doctype):
+            name = v.get("termOfPaymentName")
+            if name:
+                names.add(name.strip())
+
+    created, skipped, failed = 0, 0, 0
+    for name in sorted(names):
+        try:
+            en_api.create(ERPNextDocType.PAYMENT_TERMS_TEMPLATE, {
+                "template_name": name,
+                "terms": [_parse_wc_payment_term(name)],
+            })
+            created += 1
+        except Exception as e:
+            if "already exists" in str(e) or "DuplicateEntryError" in str(e):
+                skipped += 1
+            else:
+                print(f"FAILED Payment Terms Template '{name}': {type(e).__name__}: {e}")
+                failed += 1
+
+    print(f"--- Payment Terms Templates: {created} created, {skipped} skipped (exists), {failed} failed ---")
 
 
 def setup_item_groups(en_api: ERPNextAPI):
@@ -1003,11 +1159,13 @@ def run_setup():
     setup_link_fields(en_api)
     setup_shipment_tracking_fields(en_api)
     setup_internal_note_fields(en_api)
+    setup_customer_supplier_extra_fields(en_api)
     setup_item_groups(en_api)
     setup_warehouses(en_api)
     setup_fiscal_years(en_api)
     setup_bank_accounts(en_api)
     setup_personal_accounts(en_api)
+    setup_payment_terms(en_api)
     setup_negative_rate_settings(en_api)
     setup_uom_settings(en_api)
     setup_manufacturers(en_api)

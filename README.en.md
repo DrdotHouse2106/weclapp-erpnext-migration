@@ -40,6 +40,7 @@ Idempotent, one-time ERPNext master-data setup that must exist before the actual
 - "Allow Negative Rate For Items" is enabled automatically on both the selling and buying side (needed for credit notes/discount lines, which WeClapp represents as a negative amount)
 - Fiscal Years are created automatically for every calendar year that actually occurs in the WeClapp data (derived from the date fields across all document types), so historical documents don't fail on a missing Fiscal Year
 - The "Nos" unit of measure is switched from "must be a whole number" to allowing fractional quantities (WeClapp genuinely has fractional piece counts in places)
+- Payment Terms Templates are derived automatically from WeClapp's payment-term shorthand (e.g. "net 14", "3/14 net 90"), including the early-payment discount terms for the X/Y-net-Z notation
 - Naming (WeClapp's own document numbers are kept as ERPNext names instead of ERPNext's own naming series)
 
 ### Migrations to ERPNext
@@ -51,9 +52,19 @@ Currently implemented (see `main.py`):
   fields, WeClapp's internal comments - see below). If WeClapp has a distinct invoice-email address
   on file, a dedicated ERPNext Contact is created for it and set as the primary contact - only that
   way does ERPNext actually pick it up as the default recipient for future invoices (a plain data
-  field wouldn't be used for that)
+  field wouldn't be used for that). If WeClapp has neither a real contact person nor a distinct
+  invoice-email on file (the common case for private customers), a fallback Contact is created
+  from the customer's own master data instead (name, email, phone/mobile, salutation, title,
+  fax) - without this fallback, ERPNext's own `email_id`/`mobile_no` fields on Customer/Supplier
+  (both plain fetch fields mirroring the primary contact) never get a value at all
 - Suppliers (incl. bank accounts, individual sub-ledger account, WeClapp's internal comments,
-  distinct invoice-email as above)
+  distinct invoice-email and fallback contact as above)
+- Payment terms (`payment_terms`, see Payment Terms Templates above) and payment method (custom
+  field `wc_zahlungsart`, e.g. "Auf Rechnung", "PayPal" - no native ERPNext field for this) for
+  both customers and suppliers
+- WeClapp's four separate marketing-consent flags (email/letter/phone/sms) as custom fields
+  `wc_opt_in_email`/`_letter`/`_phone`/`_sms` on Customer (customer side only - WeClapp doesn't
+  track this for suppliers)
   - WeClapp's linked comments ("Kommentare" feature on customers/suppliers, distinct from the
     "description" field) are written together with the description into ERPNext's own native
     field for this (`customer_details`/`supplier_details` - "Internal notes about this
