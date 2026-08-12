@@ -848,6 +848,27 @@ def get_wc_warehouse_full_names() -> list[str]:
     return names
 
 
+def setup_bank_account_type(en_api: ERPNextAPI):
+    """Creates the "Bank Account Type" record (config.EN_BANK_ACCOUNT_TYPE, e.g.
+    "Kunden-Bankkonto") referenced by BankAccountMigration._transform() as Bank Account.account_type.
+    That field is a Link (options: "Bank Account Type"), not a Select - and unlike most fixed
+    ERPNext Select values, Frappe ships zero default "Bank Account Type" records out of the box
+    (confirmed live: empty list on a freshly reinstalled instance). This record had previously
+    only ever been created manually/ad-hoc directly in the ERPNext UI on the original instance -
+    never captured as idempotent setup code - so a fresh reinstall was missing it entirely,
+    causing every single customer/supplier bank account migration to fail with
+    "Kontotyp: Kunden-Bankkonto konnte nicht gefunden werden" (LinkValidationError).
+    """
+    try:
+        en_api.create("Bank Account Type", {"account_type": config.EN_BANK_ACCOUNT_TYPE})
+        print(f"--- Bank Account Type '{config.EN_BANK_ACCOUNT_TYPE}': created ---")
+    except Exception as e:
+        if "already exists" in str(e) or "DuplicateEntryError" in str(e):
+            print(f"--- Bank Account Type '{config.EN_BANK_ACCOUNT_TYPE}': exists ---")
+        else:
+            print(f"FAILED Bank Account Type '{config.EN_BANK_ACCOUNT_TYPE}': {type(e).__name__}: {e}")
+
+
 def setup_bank_accounts(en_api: ERPNextAPI):
     """Creates WeClapp's real bank/loan/credit-card/cash accounts (bankAccount.json,
     cashAccount.json) as individual ERPNext Accounts, and the receivable write-off account used
@@ -1163,6 +1184,7 @@ def run_setup():
     setup_item_groups(en_api)
     setup_warehouses(en_api)
     setup_fiscal_years(en_api)
+    setup_bank_account_type(en_api)
     setup_bank_accounts(en_api)
     setup_personal_accounts(en_api)
     setup_payment_terms(en_api)
