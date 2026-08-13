@@ -8,6 +8,10 @@ Projekt relevant sind, aber nicht in eine öffentliche Doku gehören.
 abgeschlossenen Punkten oder neu aufgetauchten offenen Fragen ergänzen/korrigieren, nicht nur einmalig
 schreiben. Der "Aktueller Stand"-Abschnitt ist der wichtigste Teil und muss akkurat bleiben.
 
+**Sprache: Immer auf Deutsch antworten.** Unabhängig von der Sprache der Nutzeranfrage – alle
+Antworten in diesem Projekt auf Deutsch verfassen. Code, Bezeichner und Kommentare bleiben davon
+unberührt (Englisch, wie im restlichen Codebase-Standard).
+
 ## Was das Projekt macht
 
 Migration von WeClapp (ERP) nach ERPNext (Open-Source-ERP) für eine konkrete Instanz, über die
