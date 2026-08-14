@@ -443,8 +443,20 @@ ihre eigenen Custom Fields/Notifications auf einer wirklich frischen Site sauber
   Autoname-Mechanik für Account lässt das über die dünne REST-Wrapper-Schicht nicht zu) – ist
   funktional irrelevant, da Buchung über die Kontonummer läuft, nicht das Label.
 
-## Bekannte, behobene Stolperfallen beim Cachen
+## Bekannte, behobene Stolperfallen beim Cachen/Migrieren
 
+- **`erpnext/en_api.py` hatte (wie zuvor `wc_api.py`, siehe nächster Punkt) keinen Request-Timeout.**
+  Live beobachtet (2026-08-14): ein `main.py`-Lauf gegen die frisch aufgesetzte Instanz blieb nach
+  einem Laptop-Schlafzustand über Nacht **22+ Stunden** ohne jede neue Log-Zeile hängen - `ps`
+  zeigte weiterhin eine offene TCP-Verbindung zum Frappe-Cloud-Host, CPU-Zeit stagnierte. Exakt
+  derselbe Bug wie unten für `wc_api.py` dokumentiert, aber nie auf die ERPNext-Seite übertragen.
+  Fix: `timeout=(10, 180)` auf beide `session.request()`-Aufrufe in `_request()` sowie auf den
+  separaten `requests.post()` in `upload_file()` (nutzt keine Session, wurde beim ersten Fix
+  übersehen). Diagnose-Muster wie beim Cache-Hänger: `ps aux | grep main.py`, `lsof -p <pid>`
+  zeigt die hängende Verbindung, `ls -la <logfile>` zeigt den Zeitpunkt des letzten Fortschritts -
+  zusätzlich empfiehlt sich ein Live-Abgleich der tatsächlichen ERPNext-Datensatzzahlen
+  (`frappe.client.get_count` per API) gegen den Log-Stand, um sicherzugehen, dass wirklich nichts
+  mehr vorankommt und nicht nur die Log-Ausgabe verzögert ist.
 - **`weclapp/wc_api.py` hatte keinen Request-Timeout.** Ein hängender Server/Proxy konnte
   `cache_weclapp.py` unbemerkt für Stunden blockieren (live beobachtet: 2+ Stunden, eine einzelne
   offene TCP-Verbindung, keine Fehlerausgabe). Jetzt `timeout=(10, 180)` gesetzt, und die
