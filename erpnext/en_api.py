@@ -63,10 +63,15 @@ class ERPNextAPI(ApiBase):
         response = None
         try:
             try:
-                response = self.session.request(method=method, url=url, json=data, params=params)
+                # (connect timeout, read timeout) - without this, a stalled server/proxy connection
+                # blocks the whole migration run indefinitely with no error/output (observed in
+                # practice: a run stuck for 22+ hours with zero log activity after the laptop slept).
+                response = self.session.request(method=method, url=url, json=data, params=params,
+                                                  timeout=(10, 180))
             except RequestException:
                 # Transient connection-level failure (no response object) - retry once
-                response = self.session.request(method=method, url=url, json=data, params=params)
+                response = self.session.request(method=method, url=url, json=data, params=params,
+                                                  timeout=(10, 180))
             response.raise_for_status()
         except RequestException as e:
             if response is None:
@@ -245,7 +250,8 @@ class ERPNextAPI(ApiBase):
                 url     = self._get_method_url("upload_file"),
                 headers = headers,
                 files   = {"file": file},
-                data    = {"doctype": doctype.value, "docname": id}
+                data    = {"doctype": doctype.value, "docname": id},
+                timeout = (10, 180)
             )
             response.raise_for_status()
             # "message" contains the created File document (file_url etc.)
