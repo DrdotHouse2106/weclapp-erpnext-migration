@@ -5,7 +5,8 @@
 cd "$(dirname "$0")"
 source venv/bin/activate
 
-STALE_SECS=300
+STALE_SECS=1200
+export PYTHONUNBUFFERED=1
 SUP_LOG=/tmp/migration_supervisor.log
 
 echo "$(date) Supervisor started" >> "$SUP_LOG"
