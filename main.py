@@ -235,22 +235,20 @@ if __name__ == "__main__":
     # bzw. schlaegt die Artikelanlage fehl. Idempotent - bereits vorhandene Eintraege werden uebersprungen.
     run_setup()
 
-    # Stammdaten (Kunden/Lieferanten vor allem, was auf sie verweist; Artikel vor allen
-    # Belegen, die Artikel referenzieren)
-    migrate_wc_en_customers()
-    migrate_wc_en_suppliers()
-    migrate_wc_en_crm_events()
-    migrate_wc_en_articles()
-
-    # Lagerbewegungen (Lagerräume + Artikel müssen bereits existieren, Belege dagegen nicht -
-    # die volle Bewegungshistorie ist die alleinige Quelle für den ERPNext-Lagerbestand,
-    # siehe migrate_wc_en_stock_movements())
-    migrate_wc_en_stock_movements()
-
-    # Verkaufsseitige Transaktionsdaten in chronologischer Reihenfolge des Verkaufsprozesses
-    # (Angebot -> Auftrag -> Rechnung)
-    migrate_wc_en_quotations()
-    migrate_wc_en_sales_orders()
+    # TEMPORÄR (2026-08-18): Customer/Supplier/CRM-Events/Item/Stock-Entry/Quotation/Sales-Order
+    # sind live gegengeprüft vollständig (0 offene Fehler, siehe CLAUDE.md) - das erneute
+    # idempotente Durchprüfen jedes einzelnen Datensatzes kostet bei instabiler Verbindung
+    # trotzdem 1-2 Stunden pro main.py-Neustart, bevor der Lauf überhaupt bei den noch offenen
+    # Sales Invoices (payment_terms_template-Fix, siehe invoice_migration.py) ankommt.
+    # Auskommentiert, um direkt bei den offenen Abschnitten weiterzumachen - vor dem nächsten
+    # "sauberen" Voll-Lauf wieder einkommentieren.
+    # migrate_wc_en_customers()
+    # migrate_wc_en_suppliers()
+    # migrate_wc_en_crm_events()
+    # migrate_wc_en_articles()
+    # migrate_wc_en_stock_movements()
+    # migrate_wc_en_quotations()
+    # migrate_wc_en_sales_orders()
     migrate_wc_en_invoices()
 
     # Zahlungseingänge (echte WeClapp-Zahlungsdaten, siehe payment_entry_migration.py) - nach
