@@ -85,6 +85,12 @@ class InvoiceMigration(BaseMigration):
             "set_posting_time"  : 1,
             "posting_date"      : self._map_invoice_date(),
             "due_date"          : self._map_due_date(),
+            # Explicit None, not omitted: Customer.payment_terms (see setup.setup_payment_terms())
+            # would otherwise get auto-fetched by ERPNext on insert, and its validate_due_date()
+            # then rejects our explicit due_date (WeClapp's real due date) whenever it doesn't
+            # match what the generic template would compute - "Das Fälligkeitsdatum darf nicht
+            # nach ... liegen". The per-invoice payment_schedule below is the source of truth.
+            "payment_terms_template": None,
             "customer"          : self.wc_data.get("customerNumber", str()),
             "title"             : self.wc_data.get("commission", str()),
             "payment_schedule"  : self._map_payment_schedule() if not self._is_credit_note() else None,
