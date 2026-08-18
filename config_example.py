@@ -348,3 +348,6 @@ EN_PURCHASE_PAID_TO_ACCOUNT_TYPE      = "Payable"                               
 
 # ERPNext Settings - Bank accounts
 EN_MIGRATE_BANK_ACCOUNTS        = True                           # If False, customer/supplier bank accounts are not migrated
+
+# ERPNext Settings - Payment Terms
+EN_MIGRATION_PAYMENT_TERMS_TEMPLATE = "Migration - unbegrenzt"   # Dummy template with a very high credit_days, set on every migrated Sales/Purchase Invoice - see config.py comment for why
