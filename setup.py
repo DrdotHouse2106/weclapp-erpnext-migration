@@ -698,6 +698,37 @@ def setup_payment_terms(en_api: ERPNextAPI):
     print(f"--- Payment Terms Templates: {created} created, {skipped} skipped (exists), {failed} failed ---")
 
 
+def setup_migration_payment_terms_template(en_api: ERPNextAPI):
+    """Creates config.EN_MIGRATION_PAYMENT_TERMS_TEMPLATE - a dummy Payment Terms Template with
+    a very high credit_days (100 years), explicitly set on every migrated Sales/Purchase Invoice
+    (see invoice_migration.py/purchase_invoice_migration.py). Necessary because sending
+    payment_terms_template=None does NOT prevent ERPNext's own set_missing_values() from filling
+    it in from Customer/Supplier.payment_terms on insert - confirmed live, the field has no
+    fetch_from configured, this is plain server-side accounts_controller.py logic that ignores
+    what the client sent. With the real customer default template active, ERPNext then rejects
+    every invoice whose real historical WeClapp due_date is later than that template's credit_days
+    would allow ("Das Fälligkeitsdatum darf nicht nach ... liegen") - 861 Sales Invoices affected
+    in the live run that first surfaced this. This template's 100-year credit_days makes that
+    validation a no-op while our own explicit payment_schedule (the real due date) stays the
+    actual source of truth.
+    """
+    try:
+        en_api.create(ERPNextDocType.PAYMENT_TERMS_TEMPLATE, {
+            "template_name": config.EN_MIGRATION_PAYMENT_TERMS_TEMPLATE,
+            "terms": [{
+                "invoice_portion": 100.0,
+                "due_date_based_on": "Day(s) after invoice date",
+                "credit_days": 36500,
+            }],
+        })
+        print(f"--- Migration Payment Terms Template '{config.EN_MIGRATION_PAYMENT_TERMS_TEMPLATE}': created ---")
+    except Exception as e:
+        if "already exists" in str(e) or "DuplicateEntryError" in str(e):
+            print(f"--- Migration Payment Terms Template '{config.EN_MIGRATION_PAYMENT_TERMS_TEMPLATE}': exists ---")
+        else:
+            print(f"FAILED Migration Payment Terms Template: {type(e).__name__}: {e}")
+
+
 def setup_item_groups(en_api: ERPNextAPI):
     """Creates the ERPNext Item Group hierarchy from WeClapp's articleCategory cache."""
     categories = json.load(open(f"{config.WC_CACHE_BASE}articleCategory.json"))["data"]
@@ -1188,6 +1219,7 @@ def run_setup():
     setup_bank_accounts(en_api)
     setup_personal_accounts(en_api)
     setup_payment_terms(en_api)
+    setup_migration_payment_terms_template(en_api)
     setup_negative_rate_settings(en_api)
     setup_uom_settings(en_api)
     setup_manufacturers(en_api)
