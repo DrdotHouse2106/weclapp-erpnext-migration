@@ -75,6 +75,12 @@ class PurchaseInvoiceMigration(BaseMigration):
             "set_posting_time"  : 1,
             "posting_date"      : self._map_invoice_date(),
             "due_date"          : self._map_due_date(),
+            # Explicit None, not omitted: Supplier.payment_terms (see setup.setup_payment_terms())
+            # would otherwise get auto-fetched by ERPNext on insert, and its validate_due_date()
+            # then rejects our explicit due_date (WeClapp's real due date) whenever it doesn't
+            # match what the generic template would compute - see invoice_migration.py for the
+            # sales-side equivalent of this bug, found live with 861 Sales Invoice failures.
+            "payment_terms_template": None,
             "bill_no"           : self.wc_data.get("invoiceNumber", str()),
             "bill_date"         : self._map_invoice_date(),
             "supplier"          : self.wc_data.get("supplierNumber", str()),
