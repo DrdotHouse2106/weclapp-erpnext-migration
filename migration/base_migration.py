@@ -301,7 +301,7 @@ class BaseMigration(ABC):
         Returns:
             bool: True if the document exists (caller should skip), False otherwise
         """
-        if name and self._en_api.get(self.get_doctype(), name):
+        if name and name in self._en_api.get_all_names(self.get_doctype()):
             print(f"Skipped existing {self.get_doctype()} {name}")
             return True
         return False

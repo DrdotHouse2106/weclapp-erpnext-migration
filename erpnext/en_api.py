@@ -228,6 +228,27 @@ class ERPNextAPI(ApiBase):
     
     def get_count(self, doctype: ERPNextDocType) -> int:
         raise NotImplementedError("Not implemented yet")
+
+    def get_all_names(self, doctype: ERPNextDocType) -> set:
+        """Fetches the "name" field of every existing document of the given DocType in a single
+        request (limit_page_length=0 - confirmed live to return the full result set, not just
+        the default page). Cached per (doctype, ERPNextAPI instance) - one bulk fetch per
+        migrate_all() run instead of one GET-by-name request per record. On a re-run over an
+        already largely migrated doctype (e.g. 4000+ already-existing Sales Invoices), that
+        one-by-one pattern alone can eat 10+ minutes per main.py restart before ever reaching a
+        genuinely new record.
+
+        Returns:
+            set: All existing document names for the DocType
+        """
+        if not hasattr(self, "_all_names_cache"):
+            self._all_names_cache = {}
+        doctype_key = doctype.value if isinstance(doctype, ERPNextDocType) else doctype
+        if doctype_key not in self._all_names_cache:
+            response = self._request(self._get_resource_url(doctype), "GET",
+                                     params={"fields": json.dumps(["name"]), "limit_page_length": 0})
+            self._all_names_cache[doctype_key] = {row["name"] for row in response["data"]}
+        return self._all_names_cache[doctype_key]
     
     def upload_file(self, doctype: ERPNextDocType, id: str, file_path: str) -> dict:
         """Uploads a file to the given DocType
