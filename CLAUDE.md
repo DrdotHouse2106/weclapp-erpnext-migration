@@ -69,7 +69,7 @@ Vor jedem `git add`/Push kurz `git status` prüfen, dass keine dieser Dateien au
 `"Your Company"`/`"YC"`, keine echten Firmennamen/Kontodaten) – siehe Historie, das war zwischenzeitlich
 mit echten FranceTec-Daten befüllt und wurde bewusst zurückgebaut.
 
-## Aktueller Stand (zuletzt aktualisiert: 2026-08-10)
+## Aktueller Stand (zuletzt aktualisiert: 2026-08-19)
 
 Der Nutzer hat ERPNext einmal komplett zurückgesetzt (Migrations-Daten/Masterdata entfernt, die
 Basis-Struktur – Kontenplan, Kostenstellen, Steuervorlagen, Konten-Übergruppen – blieb erhalten)
@@ -434,6 +434,64 @@ ihre eigenen Custom Fields/Notifications auf einer wirklich frischen Site sauber
     Neuer, ebenfalls neuer Helper `ERPNextHelper.strip_html()` musste zusätzlich mehrfach
     unescapen (nicht nur einmal) - siehe Punkt 9, dieselbe Methode wird hier für `customer_details`
     weiterverwendet, keine neue Logik nötig.
+
+13. **Zweiter Reinstall-Zyklus (2026-08-14 bis 2026-08-19): main.py auf der frisch aufgesetzten
+    Instanz komplett erfolgreich durchgelaufen (main.py Exit-Code 0, zweimal identisch
+    reproduziert).** Mehrtägiger Lauf, dominiert von Infrastrukturproblemen auf der Nutzerseite
+    (instabile/unterbrochene Internetverbindung, Laptop wiederholt zugeklappt/im Ruhezustand),
+    nicht von Migrationslogik-Bugs - aber dabei drei echte, vorher unentdeckte Bugs gefunden und
+    behoben:
+    - **`erpnext/en_api.py` hatte keinen Request-Timeout** (derselbe Bug-Typ wie zuvor bei
+      `wc_api.py`, nie übertragen) - ein hängender Request blockierte main.py teils über 22
+      Stunden unbemerkt. Fix: `timeout=(10, 180)` auf `_request()` und `upload_file()`. Auch
+      damit blieben vereinzelte Hänger möglich (macOS-Systemschlaf/App-Nap kann den ganzen
+      Python-Prozess inkl. seiner Timer aussetzen, nicht nur die Netzwerkverbindung) - dagegen
+      hilft nur ein externer Watchdog, siehe `supervise_main.sh` unten.
+    - **`payment_terms_template` auf Sales/Purchase Invoice: `None` senden verhindert NICHT, dass
+      ERPNext es serverseitig aus `Customer`/`Supplier.payment_terms` nachfüllt** (kein
+      `fetch_from`, sondern eigene Logik in `accounts_controller.py`s `set_missing_values()` -
+      live per DocType-Feldabfrage bestätigt, dass kein `fetch_from` konfiguriert ist). Sobald das
+      nachgefüllte Template aktiv war, validierte ERPNext unser echtes WeClapp-Fälligkeitsdatum
+      dagegen und lehnte 861 Sales Invoices mit "Das Fälligkeitsdatum darf nicht nach ... liegen"
+      ab (`accounts/party.py`s `validate_due_date_with_template()`). Fix: dediziertes, absichtlich
+      übergroßzügiges Payment Terms Template `config.EN_MIGRATION_PAYMENT_TERMS_TEMPLATE`
+      ("Migration - unbegrenzt", 36500 Kreditage) wird jetzt explizit statt `None` gesetzt - macht
+      die Validierung wirkungslos, ohne dass unser eigener `payment_schedule`/`due_date` als
+      Quelle der Wahrheit angetastet wird. `setup.setup_migration_payment_terms_template()` legt
+      es idempotent an, Teil von `run_setup()`.
+    - **`_skip_if_exists()` prüfte pro Datensatz einzeln per GET, ob der Name schon existiert -
+      bei mehreren tausend bereits vollständig migrierten Datensätzen (z. B. 4187 von 5165 Sales
+      Invoices) kostete allein das erneute Durchprüfen 10-15 Minuten pro main.py-Neustart, bevor
+      überhaupt eine einzige neue Rechnung erreicht wurde.** Bei der beobachteten
+      Verbindungsinstabilität reichte das oft nicht mehr aus, ohne dass main.py über die schon
+      fertigen Datensätze hinauskam. Fix: neue `ERPNextAPI.get_all_names(doctype)` holt alle
+      existierenden Namen eines Doctypes in einem einzigen Request (`limit_page_length=0`, live
+      bestätigt: liefert wirklich den vollen Datensatz, nicht nur eine Seite) und cached das
+      Ergebnis pro `ERPNextAPI`-Instanz; `_skip_if_exists()` prüft jetzt nur noch lokal gegen
+      dieses Set. 4187 Namen in 0,2s statt vorher ~10-15 Minuten. Betrifft alle Migrationen, die
+      `_skip_if_exists()` nutzen (Sales/Purchase Order/Invoice, Stock Entry, Delivery Note,
+      Quotation, CRM Event, Payment Entry).
+    - **Neu:** `supervise_main.sh` (Projekt-Root, nicht Teil von `main.py`/`setup.py`) - ein
+      Bash-Watchdog, der `main.py` startet, dessen Log-Datei auf Stillstand überwacht
+      (`STALE_SECS`, aktuell 1200s) und bei Überschreitung killt und neu startet, in Dauerschleife
+      bis manuell gestoppt. Wurde nötig, weil main.py bei den beobachteten
+      Verbindungsabbrüchen/Systemschlaf-Ereignissen wiederholt (>20 Mal über mehrere Tage) hängen
+      blieb, ohne dass der Request-Timeout allein griff (siehe oben). **Wichtig:** `main.py` muss
+      mit `PYTHONUNBUFFERED=1` laufen (im Skript per `export` gesetzt) - ohne das puffert Python
+      `stdout` beim Schreiben in eine Datei komplett, viele Setup-Schritte geben aber erst am Ende
+      eine Zeile aus, wodurch der Watchdog einen völlig normal arbeitenden, nur unsichtbar
+      arbeitenden Prozess fälschlich als hängend erkannt und abgewürgt hätte (live beobachtet,
+      bevor der Fix gefunden wurde). Kein fester Bestandteil des normalen Workflows - Wegwerf-
+      /Hilfsskript für einen einzelnen instabilen Live-Lauf, kann bei Bedarf für künftige Läufe
+      wiederverwendet werden.
+    **Endergebnis (zwei identische main.py-Komplettläufe in Folge bestätigt):** Sales Invoice
+    5165/5165 (0 Fehler), Delivery Note 3190 total (2 bekannte akzeptierte Fehler, siehe Punkt 9
+    oben), Purchase Order 645/645 (0 Fehler), Purchase Invoice 2800 total (3 bekannte Fehler),
+    Payment Entry Verkauf 5138 total (147 bekannte "Betrag übersteigt offenen Betrag"-Fälle),
+    Payment Entry Einkauf 2778 total (118 bekannte Fälle), Belegketten-Verknüpfungen (Quotation
+    52, Sales Order 3294, Purchase Order 175) und Sperren/Deaktivierungen (367) jeweils 0 Fehler.
+    Alle verbleibenden Fehler sind die bereits in "Offene Punkte" dokumentierte, akzeptierte
+    Restkategorie - kein neuer Code-Fix vorgesehen.
 
 **Design-Entscheidungen, die bewusst so getroffen wurden (nicht versehentlich unvollständig):**
 - WeClapps volles Buchungsjournal (`accountingTransaction`) wird NICHT als allgemeine Journal Entries
