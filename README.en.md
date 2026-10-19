@@ -212,3 +212,19 @@ This runs `setup.run_setup()` again and then every migration step in the order d
 If this project is useful to you, a small donation is always appreciated:
 
 [![Donate via PayPal](https://img.shields.io/badge/Donate-PayPal-0070ba?logo=paypal&logoColor=white)](https://paypal.me/DrdotHouse)
+
+### For companies: support further development
+
+You use this project in your business and would like to support its further development?
+Happy to do so **with an invoice** – one-off or **monthly**. On request I'll list you here under
+"Supporters" with company name and link.
+
+Please note: I'm not a professional developer – this project is a hobby. Your contribution
+therefore isn't a support contract; I can't offer support, response times or warranty. Feature requests
+and suggestions for improvement are always welcome, though.
+
+Contact: [info@francetec.de](mailto:info@francetec.de)
+
+#### Supporters
+
+*None yet – I'd be glad to see your name here.*
