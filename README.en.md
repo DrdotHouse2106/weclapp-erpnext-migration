@@ -1,5 +1,7 @@
 # WeClapp → ERPNext Migration
 
+[![Buy me a coffee](https://img.shields.io/badge/☕_Buy_me_a_coffee-PayPal-0070ba?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/DrdotHouse)
+
 *[Deutsche Version](README.md)*
 
 A Python project for migrating data from the [WeClapp](https://www.weclapp.com/) ERP system to the open-source ERP system [ERPNext](https://erpnext.com), using the REST APIs of both products.
